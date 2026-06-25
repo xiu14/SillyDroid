@@ -1,38 +1,22 @@
 package com.jm.sillydroid.feature.main.ui.home.floatinglogs
 
-import android.net.Uri
-import android.text.InputType
-import android.util.Size
-import android.view.ContextThemeWrapper
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
-import android.widget.HorizontalScrollView
 import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.graphics.drawable.GradientDrawable
-import androidx.activity.result.ActivityResultLauncher
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
-import androidx.core.widget.TextViewCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 import com.jm.sillydroid.core.model.bootstrap.BootstrapLogKind
 import com.jm.sillydroid.core.model.bootstrap.BootstrapSessionSnapshot
 import com.jm.sillydroid.core.model.bootstrap.shouldPreferTavernServerLog
-import com.jm.sillydroid.core.model.logs.HostLogBundleAttachment
-import com.jm.sillydroid.core.model.logs.HostLogBundleUploadRequestConfig
 import com.jm.sillydroid.core.ui.logs.HostLogExportSelectionDialogText
 import com.jm.sillydroid.core.ui.logs.showHostLogExportSelectionDialog
 import com.jm.sillydroid.core.ui.scroll.DraggableScrollThumbController
@@ -50,8 +34,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.ConnectException
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.URL
 import kotlin.math.abs
-import com.google.android.material.R as MaterialR
 
 class FloatingLogsController(
     private val activity: AppCompatActivity,
@@ -66,12 +54,9 @@ class FloatingLogsController(
     private val currentSnapshot: () -> BootstrapSessionSnapshot,
     private val canOpenSettings: (BootstrapSessionSnapshot) -> Boolean,
     private val openSettings: () -> Unit,
-    private val openCurrentPageInBrowser: () -> Boolean,
     private val reloadTavernWebView: () -> Boolean,
     private val applyBrowserZoomPercent: (Int) -> Boolean,
     private val applyBrowserPageZoomPercent: (Int) -> Boolean,
-    private val feedbackImageLauncher: ActivityResultLauncher<String>,
-    private val feedbackUploadConfig: () -> HostLogBundleUploadRequestConfig,
     private val recordHostDiagnostic: (category: String, body: String) -> Unit
 ) : DefaultLifecycleObserver {
     private var refreshJob: Job? = null
@@ -83,8 +68,6 @@ class FloatingLogsController(
     private var selectedLogFileName: String? = null
     private var lastPreferredLogKind: BootstrapLogKind? = null
     private var autoScrollEnabled = true
-    private var pendingFeedbackImageUris: List<Uri> = emptyList()
-    private var pendingFeedbackImagePreviewBinding: FeedbackImagePreviewBinding? = null
     private val bubbleTouchSlop by lazy { ViewConfiguration.get(activity).scaledTouchSlop }
 
     val isPanelVisible: Boolean
@@ -336,12 +319,8 @@ class FloatingLogsController(
             setPanelVisible(false)
             openSettings()
         }
-        views.openBrowserButton.setOnClickListener {
-            // 日志球面板里的浏览器入口复用 WebView 当前页外开能力，确保带出酒馆当前路由而不是固定首页。
-            openCurrentPageInBrowser()
-        }
-        views.feedbackButton.setOnClickListener {
-            showFeedbackDialog()
+        views.backupButton.setOnClickListener {
+            triggerRemoteBackup()
         }
     }
 
@@ -774,236 +753,82 @@ class FloatingLogsController(
         }
     }
 
-    fun onFeedbackImagesSelected(uris: List<Uri>) {
-        pendingFeedbackImageUris = uris
-        pendingFeedbackImagePreviewBinding?.render(uris)
-    }
-
-    private fun showFeedbackDialog() {
-        pendingFeedbackImageUris = emptyList()
-        val container = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(
-                dimen(R.dimen.sillydroid_feedback_dialog_padding_horizontal),
-                dimen(R.dimen.sillydroid_feedback_dialog_padding_vertical),
-                dimen(R.dimen.sillydroid_feedback_dialog_padding_horizontal),
-                0
-            )
-        }
-        val messageView = TextView(activity).apply {
-            text = this@FloatingLogsController.text.feedbackMessage()
-            TextViewCompat.setTextAppearance(this, R.style.TextAppearance_SillyDroid_FeedbackBody)
-            setTextColor(resolveThemeColor(MaterialR.attr.colorOnSurfaceVariant))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val detailInputLayout = TextInputLayout(
-            ContextThemeWrapper(activity, R.style.Widget_SillyDroid_FeedbackTextInputLayout_OutlinedBox)
-        ).apply {
-            hint = this@FloatingLogsController.text.feedbackHint()
-            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dimen(R.dimen.sillydroid_space_xl)
-            }
-        }
-        val detailInput = TextInputEditText(
-            ContextThemeWrapper(detailInputLayout.context, R.style.Widget_SillyDroid_FeedbackTextInputEditText)
-        ).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            minLines = 3
-            maxLines = 6
-            gravity = Gravity.TOP or Gravity.START
-            setHorizontallyScrolling(false)
-        }
-        detailInputLayout.addView(detailInput)
-        val imageLabel = TextView(activity).apply {
-            text = this@FloatingLogsController.text.feedbackNoImage()
-            TextViewCompat.setTextAppearance(this, R.style.TextAppearance_SillyDroid_FeedbackMeta)
-            setTextColor(resolveThemeColor(MaterialR.attr.colorOnSurfaceVariant))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                weight = 1f
-                marginEnd = dimen(R.dimen.sillydroid_space_md)
-            }
-        }
-        // 选图是反馈弹窗里的二级动作，和选择状态放在一行，避免默认按钮抢走主操作层级。
-        val imageActionRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dimen(R.dimen.sillydroid_space_lg)
-            }
-        }
-        val imagePreviewStrip = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val imagePreviewScroll = HorizontalScrollView(activity).apply {
-            isHorizontalScrollBarEnabled = false
-            isVisible = false
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dimen(R.dimen.sillydroid_space_sm)
-            }
-            addView(imagePreviewStrip)
-        }
-        val imageButton = MaterialButton(
-            ContextThemeWrapper(activity, R.style.Widget_SillyDroid_FeedbackCompactButton)
-        ).apply {
-            text = this@FloatingLogsController.text.feedbackChooseImage()
-            minWidth = dimen(R.dimen.sillydroid_feedback_action_min_width)
-            insetTop = 0
-            insetBottom = 0
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                dimen(R.dimen.sillydroid_floating_logs_compact_control_height)
-            )
-            setOnClickListener {
-                feedbackImageLauncher.launch("image/*")
-            }
-        }
-        pendingFeedbackImagePreviewBinding = FeedbackImagePreviewBinding(
-            labelView = imageLabel,
-            previewScroll = imagePreviewScroll,
-            previewStrip = imagePreviewStrip
-        ).also { binding ->
-            binding.render(emptyList())
-        }
-        container.addView(messageView)
-        container.addView(detailInputLayout)
-        imageActionRow.addView(imageLabel)
-        imageActionRow.addView(imageButton)
-        container.addView(imageActionRow)
-        container.addView(imagePreviewScroll)
-
-        MaterialAlertDialogBuilder(activity)
-            .setTitle(text.feedbackTitle())
-            .setView(container)
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                pendingFeedbackImagePreviewBinding = null
-                pendingFeedbackImageUris = emptyList()
-            }
-            .setPositiveButton(text.feedbackSubmit()) { _, _ ->
-                val detail = detailInput.text?.toString().orEmpty()
-                val imageUris = pendingFeedbackImageUris
-                pendingFeedbackImagePreviewBinding = null
-                pendingFeedbackImageUris = emptyList()
-                uploadFeedback(detail = detail, imageUris = imageUris)
-            }
-            .show()
-    }
-
-    private fun uploadFeedback(detail: String, imageUris: List<Uri>) {
-        Toast.makeText(activity, text.feedbackStarted(), Toast.LENGTH_SHORT).show()
+    private fun triggerRemoteBackup() {
+        views.backupButton.isEnabled = false
+        Toast.makeText(activity, text.backupStarted(), Toast.LENGTH_SHORT).show()
         scope.launch {
             val result = withContext(dispatchers.io) {
-                runCatching {
-                    logRepository.uploadFeedbackBundle(
-                        config = feedbackUploadConfig().copy(
-                            notes = detail.trim().takeIf { value -> value.isNotBlank() }
-                        ),
-                        feedbackText = detail,
-                        attachments = imageUris.mapIndexed { index, uri ->
-                                HostLogBundleAttachment(
-                                    entryName = resolveFeedbackImageEntryName(uri, index),
-                                    sourceUri = uri
-                                )
-                        }
-                    )
+                runCatching { requestRemoteBackup() }
+            }
+            views.backupButton.isEnabled = true
+            result.onSuccess { backup ->
+                val message = if (backup.warning.isNotBlank()) {
+                    text.backupWarning(backup.fileName.ifBlank { "-" }, backup.warning.compactForToast())
+                } else {
+                    text.backupSuccess(backup.fileName)
                 }
-            }
-            result.onSuccess { upload ->
-                recordHostDiagnostic(
-                    "log_upload",
-                    "event=feedback_upload_success crashLogId=${upload.crashLogId} archiveSizeBytes=${upload.archiveSizeBytes}"
-                )
+                Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
             }.onFailure { error ->
-                recordHostDiagnostic(
-                    "log_upload",
-                    "event=feedback_upload_failed reason=${error.javaClass.simpleName} message=${error.message.orEmpty()}"
-                )
-                Toast.makeText(activity, text.feedbackFailed(), Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    activity,
+                    text.backupFailed(remoteBackupFailureReason(error)),
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
 
-    private fun resolveFeedbackImageEntryName(uri: Uri, index: Int): String {
-        return uri.lastPathSegment
-            ?.substringAfterLast('/')
-            ?.substringAfterLast(':')
-            ?.takeIf { value -> value.isNotBlank() }
-            ?: "feedback-image-${index + 1}"
-    }
-
-    private fun createFeedbackImagePreview(uri: Uri): ImageView {
-        val previewSize = dimen(R.dimen.sillydroid_feedback_image_preview_size)
-        return ImageView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(previewSize, previewSize).apply {
-                marginEnd = dimen(R.dimen.sillydroid_space_sm)
+    private fun requestRemoteBackup(): RemoteBackupResult {
+        val connection = (URL(remoteBackupEndpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 3_000
+            readTimeout = 10 * 60 * 1_000
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            val statusCode = connection.responseCode
+            val body = readResponseBody(connection, statusCode)
+            if (statusCode !in 200..299) {
+                val message = runCatching { JSONObject(body).optString("error") }
+                    .getOrDefault("")
+                    .ifBlank { "HTTP $statusCode" }
+                error(message)
             }
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dimenFloat(R.dimen.sillydroid_feedback_image_preview_radius)
-                setColor(resolveThemeColor(MaterialR.attr.colorSurfaceContainerLow))
-                setStroke(dp(1), resolveThemeColor(MaterialR.attr.colorOutlineVariant))
+            val json = JSONObject(body)
+            if (!json.optBoolean("ok", false)) {
+                error(json.optString("error").ifBlank { text.backupUnknownError() })
             }
-            clipToOutline = true
-            // 反馈图片必须让用户确认选中的内容；这里只读取系统缩略图，避免预览原图造成额外内存压力。
-            runCatching {
-                setImageBitmap(activity.contentResolver.loadThumbnail(uri, Size(previewSize, previewSize), null))
-            }
+            RemoteBackupResult(
+                fileName = json.optString("file"),
+                warning = json.optString("warning")
+            )
+        } finally {
+            connection.disconnect()
         }
     }
 
-    private fun dimen(resId: Int): Int {
-        return activity.resources.getDimensionPixelSize(resId)
+    private fun readResponseBody(connection: HttpURLConnection, statusCode: Int): String {
+        val stream = if (statusCode in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream ?: connection.inputStream
+        }
+        return stream.bufferedReader().use { it.readText() }
     }
 
-    private fun dimenFloat(resId: Int): Float {
-        return activity.resources.getDimension(resId)
-    }
-
-    private fun dp(value: Int): Int {
-        return (value * activity.resources.displayMetrics.density).toInt()
-    }
-
-    private fun resolveThemeColor(attrRes: Int): Int {
-        return MaterialColors.getColor(activity, attrRes, 0)
-    }
-
-    private inner class FeedbackImagePreviewBinding(
-        private val labelView: TextView,
-        private val previewScroll: HorizontalScrollView,
-        private val previewStrip: LinearLayout
-    ) {
-        fun render(uris: List<Uri>) {
-            labelView.text = if (uris.isEmpty()) {
-                text.feedbackNoImage()
-            } else {
-                text.feedbackSelectedImage(uris.size)
-            }
-            previewScroll.isVisible = uris.isNotEmpty()
-            previewStrip.removeAllViews()
-            uris.forEach { uri ->
-                previewStrip.addView(createFeedbackImagePreview(uri))
-            }
+    private fun remoteBackupFailureReason(error: Throwable): String {
+        return when (error) {
+            is ConnectException -> text.backupUnavailable()
+            is SocketTimeoutException -> text.backupTimeout()
+            else -> error.message?.compactForToast()?.ifBlank { null } ?: text.backupUnknownError()
         }
     }
+
+    private fun String.compactForToast(maxLength: Int = 140): String {
+        val compact = replace(Regex("\\s+"), " ").trim()
+        return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
+    }
+
 }
 
 data class FloatingLogsViews(
@@ -1026,8 +851,7 @@ data class FloatingLogsViews(
     val browserPageZoomLabel: TextView,
     val browserPageZoomSlider: SeekBar,
     val openSettingsButton: MaterialButton,
-    val openBrowserButton: MaterialButton,
-    val feedbackButton: MaterialButton,
+    val backupButton: MaterialButton,
     val scrollToBottomButton: ImageButton
 )
 
@@ -1055,13 +879,18 @@ data class FloatingLogsText(
     val clearConfirmPositiveLabel: () -> String,
     val clearSuccess: () -> String,
     val clearFailed: () -> String,
-    val feedbackTitle: () -> String,
-    val feedbackMessage: () -> String,
-    val feedbackHint: () -> String,
-    val feedbackChooseImage: () -> String,
-    val feedbackNoImage: () -> String,
-    val feedbackSelectedImage: (count: Int) -> String,
-    val feedbackSubmit: () -> String,
-    val feedbackStarted: () -> String,
-    val feedbackFailed: () -> String
+    val backupStarted: () -> String,
+    val backupSuccess: (fileName: String) -> String,
+    val backupWarning: (fileName: String, warning: String) -> String,
+    val backupFailed: (reason: String) -> String,
+    val backupUnavailable: () -> String,
+    val backupTimeout: () -> String,
+    val backupUnknownError: () -> String
 )
+
+private data class RemoteBackupResult(
+    val fileName: String,
+    val warning: String
+)
+
+private const val remoteBackupEndpoint = "http://127.0.0.1:8787/backup"

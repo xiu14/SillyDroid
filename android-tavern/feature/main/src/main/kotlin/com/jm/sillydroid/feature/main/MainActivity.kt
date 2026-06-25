@@ -12,7 +12,6 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.annotation.ColorInt
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -95,12 +94,6 @@ class MainActivity : AppCompatActivity() {
     private var lastWebViewStatusBarColorHex: String? = null
     private var lastWebViewNavigationBarColorHex: String? = null
 
-    private val feedbackImageLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        if (::floatingLogsHost.isInitialized) {
-            floatingLogsHost.onFeedbackImagesSelected(uris)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         recordActivityLifecycleDiagnostic(
@@ -176,19 +169,9 @@ class MainActivity : AppCompatActivity() {
             currentSnapshot = { processManager.currentSnapshot() },
             canOpenSettings = { snapshot -> bootstrapOverlayHost.canOpenBootstrapSettings(snapshot) },
             openSettings = { bootstrapOverlayHost.openBootstrapSettings() },
-            openCurrentPageInBrowser = { browserHost.openCurrentPageInExternalBrowser() },
             reloadTavernWebView = { browserHost.reloadTavernWebView(source = "floating_logs_button") },
             applyBrowserZoomPercent = ::applyBrowserZoomPercentFromFloatingLogs,
             applyBrowserPageZoomPercent = ::applyBrowserPageZoomPercentFromFloatingLogs,
-            feedbackImageLauncher = feedbackImageLauncher,
-            feedbackUploadConfig = {
-                HostLogBundleUploadRequestConfig(
-                    uploadUrl = appGraph.appUpdateBuildConfig.crashLogUploadUrl,
-                    writerApiKey = appGraph.appUpdateBuildConfig.crashLogUploadWriterApiKey,
-                    source = "floating-log-feedback",
-                    crashType = "user-feedback"
-                )
-            },
             recordHostDiagnostic = ::recordDefaultHostDiagnostic
         )
         browserHost = createBrowserHost()

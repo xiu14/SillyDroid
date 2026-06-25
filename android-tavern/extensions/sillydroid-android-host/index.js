@@ -1529,11 +1529,12 @@ function buildSettingsPanel() {
     header.appendChild(title);
 
     const icon = document.createElement('div');
-    icon.classList.add('inline-drawer-icon', 'fa-solid', 'fa-circle-chevron-down', 'down');
+    icon.classList.add('inline-drawer-icon', 'fa-solid', 'fa-circle-chevron-up', 'up');
     header.appendChild(icon);
 
     const content = document.createElement('div');
     content.classList.add('inline-drawer-content', 'sillydroid-host-content');
+    content.style.display = 'none';
 
     const hostSection = createSection('宿主设置');
     const versionSummary = document.createElement('div');

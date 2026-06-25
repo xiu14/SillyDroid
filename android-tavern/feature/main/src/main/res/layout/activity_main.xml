@@ -535,27 +535,12 @@
                         android:text="@string/floating_logs_open_settings_button" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/floatingLogsOpenBrowserButton"
+                        android:id="@+id/floatingLogsBackupButton"
                         style="@style/Widget.SillyDroid.FloatingLogsCompactButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="@dimen/sillydroid_space_sm"
-                        android:text="@string/floating_logs_open_browser_button" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/sillydroid_space_sm"
-                    android:gravity="start|center_vertical"
-                    android:orientation="horizontal">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/floatingLogsFeedbackButton"
-                        style="@style/Widget.SillyDroid.FloatingLogsCompactButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/floating_logs_feedback_button" />
+                        android:text="@string/floating_logs_backup_button" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

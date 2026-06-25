@@ -4,19 +4,16 @@ import android.view.View
 import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.activity.result.ActivityResultLauncher
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.jm.sillydroid.core.common.DispatcherProvider
 import com.jm.sillydroid.core.model.bootstrap.BootstrapSessionSnapshot
-import com.jm.sillydroid.core.model.logs.HostLogBundleUploadRequestConfig
 import com.jm.sillydroid.core.ui.scroll.DraggableScrollThumbController
 import com.jm.sillydroid.domain.logs.HostLogRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 import com.jm.sillydroid.feature.main.R
-import android.net.Uri
 
 /**
  * 把悬浮日志相关的视图、布局控制器、内容控制器全部封装在这里，
@@ -31,12 +28,9 @@ class FloatingLogsHost(
     private val currentSnapshot: () -> BootstrapSessionSnapshot,
     private val canOpenSettings: (BootstrapSessionSnapshot) -> Boolean,
     private val openSettings: () -> Unit,
-    private val openCurrentPageInBrowser: () -> Boolean,
     private val reloadTavernWebView: () -> Boolean,
     private val applyBrowserZoomPercent: (Int) -> Boolean,
     private val applyBrowserPageZoomPercent: (Int) -> Boolean,
-    private val feedbackImageLauncher: ActivityResultLauncher<String>,
-    private val feedbackUploadConfig: () -> HostLogBundleUploadRequestConfig,
     private val recordHostDiagnostic: (category: String, body: String) -> Unit
 ) {
     private val bubble: ImageButton = activity.findViewById(R.id.floatingLogsBubble)
@@ -57,8 +51,7 @@ class FloatingLogsHost(
     private val browserPageZoomLabel: TextView = activity.findViewById(R.id.floatingLogsBrowserPageZoomLabel)
     private val browserPageZoomSlider: SeekBar = activity.findViewById(R.id.floatingLogsBrowserPageZoomSlider)
     private val openSettingsButton: MaterialButton = activity.findViewById(R.id.floatingLogsOpenSettingsButton)
-    private val openBrowserButton: MaterialButton = activity.findViewById(R.id.floatingLogsOpenBrowserButton)
-    private val feedbackButton: MaterialButton = activity.findViewById(R.id.floatingLogsFeedbackButton)
+    private val backupButton: MaterialButton = activity.findViewById(R.id.floatingLogsBackupButton)
     private val scrollToBottomButton: ImageButton = activity.findViewById(R.id.floatingLogsScrollToBottomButton)
 
     private val layoutController: FloatingLogsLayoutController by lazy {
@@ -104,8 +97,7 @@ class FloatingLogsHost(
                 browserPageZoomLabel = browserPageZoomLabel,
                 browserPageZoomSlider = browserPageZoomSlider,
                 openSettingsButton = openSettingsButton,
-                openBrowserButton = openBrowserButton,
-                feedbackButton = feedbackButton,
+                backupButton = backupButton,
                 scrollToBottomButton = scrollToBottomButton
             ),
             text = FloatingLogsText(
@@ -132,15 +124,21 @@ class FloatingLogsHost(
                 clearConfirmPositiveLabel = { activity.getString(R.string.bootstrap_settings_logs_clear) },
                 clearSuccess = { activity.getString(R.string.bootstrap_settings_logs_clear_success) },
                 clearFailed = { activity.getString(R.string.bootstrap_settings_logs_clear_failed) },
-                feedbackTitle = { activity.getString(R.string.floating_logs_feedback_title) },
-                feedbackMessage = { activity.getString(R.string.floating_logs_feedback_message) },
-                feedbackHint = { activity.getString(R.string.floating_logs_feedback_hint) },
-                feedbackChooseImage = { activity.getString(R.string.floating_logs_feedback_choose_image) },
-                feedbackNoImage = { activity.getString(R.string.floating_logs_feedback_no_image) },
-                feedbackSelectedImage = { count -> activity.getString(R.string.floating_logs_feedback_selected_image, count) },
-                feedbackSubmit = { activity.getString(R.string.floating_logs_feedback_submit) },
-                feedbackStarted = { activity.getString(R.string.floating_logs_feedback_started) },
-                feedbackFailed = { activity.getString(R.string.floating_logs_feedback_failed) }
+                backupStarted = { activity.getString(R.string.floating_logs_backup_started) },
+                backupSuccess = { fileName ->
+                    if (fileName.isBlank()) {
+                        activity.getString(R.string.floating_logs_backup_success_no_file)
+                    } else {
+                        activity.getString(R.string.floating_logs_backup_success, fileName)
+                    }
+                },
+                backupWarning = { fileName, warning ->
+                    activity.getString(R.string.floating_logs_backup_warning, fileName, warning)
+                },
+                backupFailed = { reason -> activity.getString(R.string.floating_logs_backup_failed, reason) },
+                backupUnavailable = { activity.getString(R.string.floating_logs_backup_unavailable) },
+                backupTimeout = { activity.getString(R.string.floating_logs_backup_timeout) },
+                backupUnknownError = { activity.getString(R.string.floating_logs_backup_unknown_error) }
             ),
             scrollThumbController = DraggableScrollThumbController(
                 scrollView = scroll,
@@ -150,12 +148,9 @@ class FloatingLogsHost(
             currentSnapshot = currentSnapshot,
             canOpenSettings = canOpenSettings,
             openSettings = openSettings,
-            openCurrentPageInBrowser = openCurrentPageInBrowser,
             reloadTavernWebView = reloadTavernWebView,
             applyBrowserZoomPercent = applyBrowserZoomPercent,
             applyBrowserPageZoomPercent = applyBrowserPageZoomPercent,
-            feedbackImageLauncher = feedbackImageLauncher,
-            feedbackUploadConfig = feedbackUploadConfig,
             recordHostDiagnostic = recordHostDiagnostic
         )
     }
@@ -167,5 +162,4 @@ class FloatingLogsHost(
     fun syncSettingsEntryState(snapshot: BootstrapSessionSnapshot) = controller.syncSettingsEntryState(snapshot)
     fun showBubble() = controller.showBubble()
     fun setBubbleEnabled(enabled: Boolean) = controller.setBubbleEnabled(enabled)
-    fun onFeedbackImagesSelected(uris: List<Uri>) = controller.onFeedbackImagesSelected(uris)
 }
