@@ -929,6 +929,39 @@
             </LinearLayout>
 
             <LinearLayout
+                android:id="@+id/bootstrapSettingsTavernShellPanel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <com.google.android.material.card.MaterialCardView
+                    style="@style/Widget.SillyDroid.SettingsPanelCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:id="@+id/bootstrapSettingsTavernShellContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="@dimen/sillydroid_panel_padding"
+                        android:paddingTop="@dimen/sillydroid_panel_padding"
+                        android:paddingEnd="@dimen/sillydroid_panel_padding"
+                        android:paddingBottom="@dimen/sillydroid_panel_padding">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:lineSpacingExtra="1dp"
+                            android:text="@string/bootstrap_settings_tavern_shell_summary"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="10sp" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/bootstrapSettingsSettingsPanel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

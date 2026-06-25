@@ -7,10 +7,11 @@ package com.jm.sillydroid.feature.settings.model
  */
 enum class SettingsTab(val tabPosition: Int?) {
     DATA(0),
-    SETTINGS(1),
-    EXTENSIONS(2),
-    TERMINAL(3),
-    LOGS(4),
+    TAVERN_SHELL(1),
+    SETTINGS(2),
+    EXTENSIONS(3),
+    TERMINAL(4),
+    LOGS(5),
     ABOUT(null);
 
     companion object {

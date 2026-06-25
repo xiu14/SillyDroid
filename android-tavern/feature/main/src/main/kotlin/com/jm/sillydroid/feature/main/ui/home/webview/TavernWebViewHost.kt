@@ -37,6 +37,7 @@ import com.jm.sillydroid.core.model.settings.BrowserZoomOptions
 import com.jm.sillydroid.domain.bootstrap.BootstrapController
 import com.jm.sillydroid.domain.bootstrap.RuntimeConfigRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
+import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
 import com.jm.sillydroid.feature.main.R
 import com.jm.sillydroid.feature.main.diagnostics.formatTrimMemoryLevel
 import com.jm.sillydroid.feature.main.diagnostics.normalizeDiagnosticValue
@@ -49,6 +50,7 @@ class TavernWebViewHost(
     private val activity: AppCompatActivity,
     private val homeViewModel: HomeViewModel,
     private val hostConfigStore: HostPreferencesRepository,
+    private val tavernShellSettingsRepository: TavernShellSettingsRepository,
     private val runtimeConfigRepository: RuntimeConfigRepository,
     private val processManager: BootstrapController,
     private val bridgeInstaller: BrowserHostBridgeInstaller,
@@ -118,7 +120,17 @@ class TavernWebViewHost(
             activity = activity,
             diagnosticSink = HostDiagnosticSink { category, body ->
                 recordHostDiagnostic(category = category, body = body)
-            }
+            },
+            tavernShellSettingsRepository = tavernShellSettingsRepository
+        )
+    }
+
+    private val tavernShellWebResourceInterceptor by lazy {
+        TavernShellWebResourceInterceptor(
+            context = activity.applicationContext,
+            settingsRepository = tavernShellSettingsRepository,
+            localTavernUrl = { runtimeConfigRepository.localServiceUrl() },
+            currentPageUrl = { webView.url ?: homeViewModel.loadedUrl }
         )
     }
 
@@ -137,6 +149,7 @@ class TavernWebViewHost(
             onHttpAuthRequest = httpAuthPromptController::show,
             onMainFrameLocalLoadError = ::scheduleLocalWebViewRetry,
             onRendererGone = ::handleWebViewRendererGone,
+            interceptRequest = tavernShellWebResourceInterceptor::intercept,
             onDownloadRequested = onDownloadRequested,
             onShowFileChooser = { filePathCallback, fileChooserParams ->
                 onShowFileChooser(fileChooserParams, filePathCallback)
@@ -305,6 +318,30 @@ class TavernWebViewHost(
 
     override fun reloadTavernWebView(source: String): Boolean {
         return homeWebViewRefreshController.reload(source)
+    }
+
+    override fun scrollChatToLatestFromNative(): Boolean {
+        if (!webView.isVisible) return false
+        webView.evaluateJavascript(
+            """
+                (function () {
+                  if (window.__stNativeScrollChatToLatest) {
+                    window.__stNativeScrollChatToLatest();
+                    return 'bridge_scroll';
+                  }
+                  var chat = document.querySelector('#chat');
+                  if (!chat) return 'chat_missing';
+                  var lastMessage = document.querySelector('#chat .mes:last-child');
+                  if (lastMessage && lastMessage.scrollIntoView) {
+                    lastMessage.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
+                  }
+                  chat.scrollTop = chat.scrollHeight;
+                  return 'fallback_scroll';
+                })();
+            """.trimIndent(),
+            null
+        )
+        return true
     }
 
     override fun updateRefreshLayoutEnabled() {
@@ -585,6 +622,7 @@ class TavernWebViewHost(
         setBrowserZoomPercent(hostConfigStore.browserZoomPercent)
         setBrowserPageZoomPercent(hostConfigStore.browserPageZoomPercent)
         bridgeInstaller.installAfterPageFinished(buildBridgeTarget(sourceWebView))
+        installTavernGenerationFallbackHook(sourceWebView)
         installSystemBarThemeSyncScript(sourceWebView)
         installWebPerformanceDiagnosticScript(sourceWebView)
         if (!url.isNullOrBlank()) {
@@ -713,6 +751,250 @@ class TavernWebViewHost(
                     window.__sillyDroidSystemBarThemeSyncInstalled = true;
                     scheduleNotify();
                     return 'installed';
+                })();
+            """.trimIndent(),
+            null
+        )
+    }
+
+    private fun installTavernGenerationFallbackHook(sourceWebView: WebView) {
+        val androidHostBridgeNameJson = org.json.JSONObject.quote(bridgeInstaller.androidHostBridgeName)
+        sourceWebView.evaluateJavascript(
+            """
+                (function () {
+                  if (window.__stNativeGenerationHookInstalled) return 'installed';
+                  if (window.__tavernNativeBridgeExtensionReady) return 'extension_ready';
+                  if (window.__stNativeGenerationHookInstallScheduled) return 'scheduled';
+                  window.__stNativeGenerationHookInstallScheduled = true;
+
+                  setTimeout(function () {
+                    if (window.__stNativeGenerationHookInstalled) return;
+                    if (window.__tavernNativeBridgeExtensionReady) return;
+                    window.__stNativeGenerationHookInstalled = true;
+
+                    var bridgeName = $androidHostBridgeNameJson;
+
+                    function bridge() {
+                      return window[bridgeName] || window.AndroidBridge || window.SillyDroidAndroidHostBridge;
+                    }
+
+                    function emit(name, payload) {
+                      try {
+                        var target = bridge();
+                        if (!target || typeof target.postEvent !== 'function') return false;
+                        payload = payload || {};
+                        if (!payload.bridge) payload.bridge = 'native_hook_fallback';
+                        if (!payload.source) payload.source = 'native_hook_fallback';
+                        if (!payload.characterName) payload.characterName = getCharacterName();
+                        if (!payload.at) payload.at = Date.now();
+                        if (!payload.href) payload.href = location.href;
+                        target.postEvent(String(name), JSON.stringify(payload));
+                        return true;
+                      } catch (error) {
+                        console.error('[STNative] fallback emit failed', error);
+                        return false;
+                      }
+                    }
+
+                    function getContext() {
+                      try {
+                        return window.SillyTavern && window.SillyTavern.getContext && window.SillyTavern.getContext();
+                      } catch (error) {
+                        return null;
+                      }
+                    }
+
+                    function getEventTypes(context) {
+                      return (context && (context.eventTypes || context.event_types)) || {};
+                    }
+
+                    function getCharacterName() {
+                      try {
+                        var context = getContext();
+                        var id = context && context.characterId;
+                        var character = context && context.characters && context.characters[id];
+                        return (character && (character.name || character.avatar)) || '';
+                      } catch (error) {
+                        return '';
+                      }
+                    }
+
+                    function hasPendingInput() {
+                      try {
+                        var input = document.querySelector('#send_textarea');
+                        var value = input && String(input.value || '').trim();
+                        return !!(value && value.charAt(0) !== '/');
+                      } catch (error) {
+                        return false;
+                      }
+                    }
+
+                    function emitPending(source, hadPendingInput) {
+                      var now = Date.now();
+                      if (window.__stNativeLastPendingAt && now - window.__stNativeLastPendingAt < 1200) return;
+                      if (!hadPendingInput && !hasPendingInput()) return;
+                      window.__stNativeLastPendingAt = now;
+                      emit('generation_pending', {
+                        source: source || 'send_button',
+                        at: now,
+                        href: location.href
+                      });
+                    }
+
+                    function installPendingHooks() {
+                      if (window.__stNativePendingHooksInstalled) return;
+                      window.__stNativePendingHooksInstalled = true;
+
+                      function schedulePending(source, hadPendingInput) {
+                        clearTimeout(window.__stNativePendingTimer);
+                        window.__stNativePendingTimer = setTimeout(function () {
+                          emitPending(source, hadPendingInput);
+                        }, 120);
+                      }
+
+                      function onSendButtonIntent(event) {
+                        var target = event.target && event.target.closest && event.target.closest('#send_but');
+                        if (target) schedulePending('send_button_' + event.type, hasPendingInput());
+                      }
+
+                      document.addEventListener('touchstart', onSendButtonIntent, { capture: true, passive: true });
+                      document.addEventListener('pointerdown', onSendButtonIntent, { capture: true, passive: true });
+                      document.addEventListener('mousedown', onSendButtonIntent, true);
+                      document.addEventListener('click', onSendButtonIntent, true);
+                    }
+
+                    window.__stNativeScrollChatToLatest = function () {
+                      try {
+                        var chat = document.querySelector('#chat');
+                        if (!chat) return false;
+                        var lastMessage = document.querySelector('#chat .mes:last-child');
+                        if (lastMessage && lastMessage.scrollIntoView) {
+                          lastMessage.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
+                        }
+                        chat.scrollTop = chat.scrollHeight;
+                        return true;
+                      } catch (error) {
+                        return false;
+                      }
+                    };
+
+                    function attachHooks() {
+                      try {
+                        installPendingHooks();
+                        var context = getContext();
+                        var types = getEventTypes(context);
+                        if (!context || !context.eventSource || !types) return false;
+                        if (window.__stNativeGenerationListenersAttached) return true;
+                        window.__stNativeGenerationListenersAttached = true;
+
+                        var lastStreamingTs = 0;
+                        var isGenerating = false;
+                        var hasContentStarted = false;
+                        var preContentBuffer = '';
+
+                        function markContentStarted(text, reason) {
+                          if (hasContentStarted) return;
+                          hasContentStarted = true;
+                          emit('generation_content_started', {
+                            reason: reason || 'content',
+                            length: String(text || '').length,
+                            at: Date.now(),
+                            href: location.href
+                          });
+                        }
+
+                        function updatePreContentState(text) {
+                          var value = String(text || '').trim();
+                          if (!value) return;
+                          preContentBuffer = (preContentBuffer + value.toLowerCase()).slice(-8000);
+                        }
+
+                        if (types.GENERATION_STARTED) {
+                          context.eventSource.on(types.GENERATION_STARTED, function (type, params, dryRun) {
+                            if (dryRun) return;
+                            isGenerating = true;
+                            hasContentStarted = false;
+                            preContentBuffer = '';
+                            emit('generation_started', {
+                              type: type || 'normal',
+                              params: params || null,
+                              at: Date.now(),
+                              href: location.href
+                            });
+                          });
+                        }
+
+                        if (types.STREAM_TOKEN_RECEIVED) {
+                          context.eventSource.on(types.STREAM_TOKEN_RECEIVED, function (text) {
+                            if (!isGenerating) return;
+                            var now = Date.now();
+                            var value = String(text || '');
+
+                            if (!hasContentStarted) {
+                              updatePreContentState(value);
+                              if (/<\s*content\b[^>]*>/i.test(preContentBuffer)) {
+                                markContentStarted(value, 'content_tag');
+                              }
+                            }
+
+                            if (!hasContentStarted) return;
+                            if (now - lastStreamingTs < 1200) return;
+                            lastStreamingTs = now;
+                            emit('generation_streaming', {
+                              length: value.length,
+                              at: now
+                            });
+                          });
+                        }
+
+                        if (types.GENERATION_ENDED) {
+                          context.eventSource.on(types.GENERATION_ENDED, function (messageId) {
+                            isGenerating = false;
+                            hasContentStarted = false;
+                            emit('generation_ended', {
+                              messageId: messageId,
+                              at: Date.now(),
+                              href: location.href
+                            });
+                          });
+                        }
+
+                        if (types.GENERATION_STOPPED) {
+                          context.eventSource.on(types.GENERATION_STOPPED, function () {
+                            isGenerating = false;
+                            hasContentStarted = false;
+                            emit('generation_stopped', {
+                              at: Date.now(),
+                              href: location.href
+                            });
+                          });
+                        }
+
+                        emit('st_bridge_ready', {
+                          source: 'native_hook_fallback',
+                          bridge: 'native_hook_fallback',
+                          at: Date.now(),
+                          href: location.href
+                        });
+                        return true;
+                      } catch (error) {
+                        console.error('[STNative] fallback attach failed', error);
+                        return false;
+                      }
+                    }
+
+                    if (attachHooks()) return;
+                    installPendingHooks();
+                    var attempts = 0;
+                    var timer = setInterval(function () {
+                      attempts += 1;
+                      if (window.__tavernNativeBridgeExtensionReady || attachHooks() || attempts >= 60) {
+                        clearInterval(timer);
+                      }
+                    }, 1000);
+                  }, 20000);
+
+                  return 'scheduled';
                 })();
             """.trimIndent(),
             null

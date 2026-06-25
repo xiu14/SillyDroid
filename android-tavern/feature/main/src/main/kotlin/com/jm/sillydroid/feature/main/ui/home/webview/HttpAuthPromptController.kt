@@ -12,6 +12,8 @@ import com.google.android.material.R as MaterialR
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
+import com.jm.sillydroid.domain.settings.TavernShellSiteCredentials
 import com.jm.sillydroid.feature.main.R
 import com.jm.sillydroid.feature.main.diagnostics.normalizeDiagnosticValue
 
@@ -38,6 +40,7 @@ data class HttpAuthPromptRequest(
  */
 class HttpAuthPromptController(
     private val activity: AppCompatActivity,
+    private val tavernShellSettingsRepository: TavernShellSettingsRepository? = null,
     private val diagnosticSink: HostDiagnosticSink = HostDiagnosticSink { _, _ -> }
 ) {
     private var activeDialog: AlertDialog? = null
@@ -117,7 +120,9 @@ class HttpAuthPromptController(
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_VARIATION_NORMAL or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
-            initialValue = request.initialUsername.orEmpty()
+            initialValue = request.initialUsername
+                ?: storedCredentialsFor(request)?.username
+                ?: ""
         )
         usernameInputLayout.addView(usernameInput)
 
@@ -129,7 +134,9 @@ class HttpAuthPromptController(
         }
         val passwordInput = createInputEditText(
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
-            initialValue = request.initialPassword.orEmpty()
+            initialValue = request.initialPassword
+                ?: storedCredentialsFor(request)?.password
+                ?: ""
         )
         passwordInputLayout.addView(passwordInput)
 
@@ -145,6 +152,11 @@ class HttpAuthPromptController(
             }
             .setPositiveButton(activity.getString(R.string.http_auth_prompt_login)) { _, _ ->
                 complete("submitted") {
+                    storeCredentials(
+                        request = request,
+                        username = usernameInput.text?.toString().orEmpty(),
+                        password = passwordInput.text?.toString().orEmpty()
+                    )
                     request.onConfirm(
                         HttpAuthCredentials(
                             username = usernameInput.text?.toString().orEmpty(),
@@ -211,6 +223,34 @@ class HttpAuthPromptController(
     private fun clearActivePrompt() {
         activeDialog = null
         activeCancel = null
+    }
+
+    private fun storedCredentialsFor(request: HttpAuthPromptRequest): TavernShellSiteCredentials? {
+        val host = credentialHostFor(request)
+        if (host.isBlank()) return null
+        return tavernShellSettingsRepository?.siteCredentials(host, request.realm)
+    }
+
+    private fun storeCredentials(request: HttpAuthPromptRequest, username: String, password: String) {
+        val host = credentialHostFor(request)
+        if (host.isBlank() || username.isBlank() || password.isBlank()) return
+        tavernShellSettingsRepository?.putSiteCredentials(
+            host = host,
+            realm = request.realm,
+            credentials = TavernShellSiteCredentials(username = username, password = password)
+        )
+    }
+
+    private fun credentialHostFor(request: HttpAuthPromptRequest): String {
+        val rawHost = request.host?.trim().orEmpty()
+        if (rawHost.isBlank()) return ""
+        return if (rawHost.contains("://")) {
+            runCatching {
+                tavernShellSettingsRepository?.hostOf(rawHost).orEmpty()
+            }.getOrDefault("")
+        } else {
+            rawHost
+        }
     }
 
     private fun runOnUiThread(action: () -> Unit) {

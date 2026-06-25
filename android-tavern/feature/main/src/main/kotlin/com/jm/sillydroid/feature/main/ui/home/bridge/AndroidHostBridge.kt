@@ -15,6 +15,7 @@ class AndroidHostBridge(
     private val applySystemBarsBackgroundColors: (String, String) -> Unit,
     private val reloadTavern: () -> Unit,
     private val hostVersionInfoJson: () -> String,
+    private val postEventPayload: (String, String?) -> Unit = { _, _ -> },
     private val recordWebPerformanceDiagnosticPayload: (String) -> Unit = {}
 ) {
     private companion object {
@@ -112,6 +113,18 @@ class AndroidHostBridge(
     @JavascriptInterface
     fun getHostVersionInfo(): String {
         return hostVersionInfoJson()
+    }
+
+    @JavascriptInterface
+    fun postEvent(name: String, payloadJson: String?): Boolean {
+        if (!isHostActive() || name.isBlank()) {
+            return false
+        }
+
+        runOnUiThread {
+            postEventPayload(name, payloadJson)
+        }
+        return true
     }
 
     @JavascriptInterface

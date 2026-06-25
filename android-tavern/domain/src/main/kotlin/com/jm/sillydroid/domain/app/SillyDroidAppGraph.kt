@@ -17,6 +17,7 @@ import com.jm.sillydroid.domain.runtime.RuntimeLogManager
 import com.jm.sillydroid.domain.settings.DataArchiveRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 import com.jm.sillydroid.domain.settings.SettingsConfigRepository
+import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 
 interface SillyDroidAppGraph {
@@ -33,6 +34,7 @@ interface SillyDroidAppGraph {
     val consoleRuntimeRepository: ConsoleRuntimeRepository
     val appUpdateRepository: AppUpdateRepository
     val appUpdateBuildConfig: AppUpdateBuildConfig
+    val tavernShellSettingsRepository: TavernShellSettingsRepository
 
     fun tavernConfigRepository(): SettingsConfigRepository
     fun tavernDataArchiveManager(): DataArchiveRepository

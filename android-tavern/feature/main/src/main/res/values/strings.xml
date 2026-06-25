@@ -19,6 +19,7 @@
     <string name="webview_pull_refresh_pull">下拉刷新</string>
     <string name="webview_pull_refresh_release">松手刷新</string>
     <string name="webview_pull_refresh_refreshing">正在刷新…</string>
+    <string name="tavern_foreground_pill_description">Tavern 生成状态</string>
     <string name="download_status_preparing">正在准备下载“%1$s”。</string>
     <string name="download_status_saving">正在保存“%1$s”。</string>
     <string name="download_status_pending">正在等待下载“%1$s”。</string>

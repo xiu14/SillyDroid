@@ -48,6 +48,7 @@ import com.jm.sillydroid.feature.settings.ui.screen.RuntimePatchBottomSheetContr
 import com.jm.sillydroid.feature.settings.ui.screen.SettingsActivityStateController
 import com.jm.sillydroid.feature.settings.ui.settings.BootstrapSettingsSettingsCoordinator
 import com.jm.sillydroid.feature.settings.ui.settings.BootstrapSettingsQuickActionsController
+import com.jm.sillydroid.feature.settings.ui.tavern.BootstrapSettingsTavernShellCoordinator
 import com.jm.sillydroid.feature.settings.ui.terminal.HostConsoleSessionStoreRegistry
 import com.jm.sillydroid.feature.settings.ui.terminal.TerminalExtraKeysStripView
 import com.jm.sillydroid.feature.settings.ui.terminal.TerminalPageController
@@ -123,6 +124,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
     private lateinit var searchInput: TextInputEditText
     private lateinit var quickActionsButton: MaterialButton
     private lateinit var dataPanelView: View
+    private lateinit var tavernShellPanelView: View
+    private lateinit var tavernShellContainer: LinearLayout
     private lateinit var quickFieldContainer: LinearLayout
     private lateinit var floatingLogsSwitch: MaterialSwitch
     private lateinit var backgroundOnlyModeSwitch: MaterialSwitch
@@ -216,6 +219,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
     private lateinit var settingsCoordinator: BootstrapSettingsSettingsCoordinator
     private lateinit var quickActionsController: BootstrapSettingsQuickActionsController
     private lateinit var dataCoordinator: BootstrapSettingsDataCoordinator
+    private lateinit var tavernShellCoordinator: BootstrapSettingsTavernShellCoordinator
     private lateinit var extensionsCoordinator: BootstrapSettingsExtensionsCoordinator
     private lateinit var logsCoordinator: BootstrapSettingsLogsCoordinator
     private lateinit var terminalPageController: TerminalPageController
@@ -257,6 +261,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         stateController.initialize()
         aboutController.initialize()
         screenController.initialize()
+        tavernShellCoordinator.initialize()
         extensionsCoordinator.initialize()
         logsCoordinator.initialize()
         terminalPageController.initialize()
@@ -365,6 +370,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         searchInput = findViewById(R.id.bootstrapSettingsSearchInput)
         quickActionsButton = findViewById(R.id.bootstrapSettingsQuickActionsButton)
         dataPanelView = findViewById(R.id.bootstrapSettingsDataPanel)
+        tavernShellPanelView = findViewById(R.id.bootstrapSettingsTavernShellPanel)
+        tavernShellContainer = findViewById(R.id.bootstrapSettingsTavernShellContainer)
         quickFieldContainer = findViewById(R.id.bootstrapSettingsQuickFieldContainer)
         floatingLogsSwitch = findViewById(R.id.bootstrapSettingsFloatingLogsSwitch)
         backgroundOnlyModeSwitch = findViewById(R.id.bootstrapSettingsBackgroundOnlyModeSwitch)
@@ -442,6 +449,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
             tabLayout = tabLayout,
             toolbarAboutEntryView = toolbarAboutEntryView,
             dataPanelView = dataPanelView,
+            tavernShellPanelView = tavernShellPanelView,
             extensionsPanelView = extensionsPanelView,
             logsPanelView = logsPanelView,
             logsScrollView = logsScrollView,
@@ -497,6 +505,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
                     extensionsCoordinator.reloadExtensions()
                 } else if (this::logsCoordinator.isInitialized && tab == SettingsTab.LOGS) {
                     logsCoordinator.reloadLatestLog()
+                } else if (this::tavernShellCoordinator.isInitialized && tab == SettingsTab.TAVERN_SHELL) {
+                    tavernShellCoordinator.refreshBridgeStatus()
                 }
                 if (this::terminalPageController.isInitialized) {
                     terminalPageController.onTabChanged(tab)
@@ -581,6 +591,13 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         quickActionsController = BootstrapSettingsQuickActionsController(
             activity = this,
             settingsCoordinator = settingsCoordinator,
+            showMessage = screenController::showMessage
+        )
+        tavernShellCoordinator = BootstrapSettingsTavernShellCoordinator(
+            activity = this,
+            container = tavernShellContainer,
+            settingsRepository = appGraph.tavernShellSettingsRepository,
+            runtimeConfigRepository = runtimeConfigRepository,
             showMessage = screenController::showMessage
         )
         dataCoordinator = BootstrapSettingsDataCoordinator(

@@ -37,6 +37,7 @@ assert_file "$BOOTSTRAP_ROOT/scripts/tavern-entrypoint.sh" "缺少 Tavern 服务
 mkdir -p "$APP_DATA_ROOT" "$LOGS_DIR" "$HOST_TMP_DIR"
 prepare_termux_host_runtime
 export BOOTSTRAP_ROOT
+export LOGS_DIR
 export TAVERN_PORT
 export TAVERN_DATA_ROOT="$APP_DATA_ROOT"
 export TAVERN_SERVER_DIR="$SERVER_DIR"

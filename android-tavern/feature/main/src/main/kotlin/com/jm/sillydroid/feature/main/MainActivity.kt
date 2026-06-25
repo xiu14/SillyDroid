@@ -7,7 +7,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
+import android.widget.TextView
 import androidx.annotation.ColorInt
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +30,11 @@ import com.jm.sillydroid.domain.app.SillyDroidAppGraph
 import com.jm.sillydroid.domain.app.SillyDroidAppGraphProvider
 import com.jm.sillydroid.domain.bootstrap.BootstrapController
 import com.jm.sillydroid.feature.main.diagnostics.formatTrimMemoryLevel
+import com.jm.sillydroid.feature.main.status.CompositeStatusPresenter
+import com.jm.sillydroid.feature.main.status.ForegroundPillStatusPresenter
+import com.jm.sillydroid.feature.main.status.GenerationStatusController
+import com.jm.sillydroid.feature.main.status.GenerationStatusEvent
+import com.jm.sillydroid.feature.main.status.NotificationStatusPresenter
 import com.jm.sillydroid.feature.main.ui.extensions.DefaultExtensionsInstallerLauncher
 import com.jm.sillydroid.feature.main.ui.home.HomeViewModel
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeActions
@@ -83,6 +90,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var browserHost: TavernBrowserHost
     private lateinit var bootstrapOverlayHost: BootstrapOverlayHost
     private lateinit var systemBarInsetsController: SystemBarInsetsController
+    private lateinit var generationStatusController: GenerationStatusController
     private var lastWebViewSystemBarsColorHex: String? = null
     private var lastWebViewStatusBarColorHex: String? = null
     private var lastWebViewNavigationBarColorHex: String? = null
@@ -105,6 +113,26 @@ class MainActivity : AppCompatActivity() {
         contentRoot = findViewById(R.id.contentRoot)
         statusBarBackground = findViewById(R.id.statusBarBackground)
         navigationBarBackground = findViewById(R.id.navigationBarBackground)
+        generationStatusController = GenerationStatusController(
+            CompositeStatusPresenter(
+                listOf(
+                    NotificationStatusPresenter(this),
+                    ForegroundPillStatusPresenter(
+                        pillView = findViewById<View>(R.id.tavernForegroundPill),
+                        titleView = findViewById<TextView>(R.id.tavernForegroundPillTitle),
+                        subtitleView = findViewById<TextView>(R.id.tavernForegroundPillSubtitle),
+                        settingsRepository = appGraph.tavernShellSettingsRepository,
+                        scrollChatToLatest = {
+                            if (::browserHost.isInitialized) {
+                                browserHost.scrollChatToLatestFromNative()
+                            } else {
+                                false
+                            }
+                        }
+                    )
+                )
+            )
+        )
         // 主界面刚启动时先显示 bootstrap overlay；系统栏先跟宿主遮罩底色走，
         // 等 WebView 页面拿到真实背景色后再由页面桥持续同步过去。
         applyHostSurfaceSystemBars()
@@ -560,6 +588,7 @@ class MainActivity : AppCompatActivity() {
                 activity = this,
                 homeViewModel = homeViewModel,
                 hostConfigStore = hostConfigStore,
+                tavernShellSettingsRepository = appGraph.tavernShellSettingsRepository,
                 runtimeConfigRepository = runtimeConfigRepository,
                 processManager = processManager,
                 bridgeInstaller = createBrowserBridgeInstaller(BrowserEngine.SYSTEM_WEBVIEW),
@@ -605,6 +634,7 @@ class MainActivity : AppCompatActivity() {
             activity = this,
             homeViewModel = homeViewModel,
             hostConfigStore = hostConfigStore,
+            tavernShellSettingsRepository = appGraph.tavernShellSettingsRepository,
             runtimeConfigRepository = runtimeConfigRepository,
             processManager = processManager,
             bridgeInstaller = createBrowserBridgeInstaller(BrowserEngine.GECKOVIEW),
@@ -656,9 +686,41 @@ class MainActivity : AppCompatActivity() {
             applySystemBarsBackgroundColors = ::applyWebViewSurfaceSystemBars,
             reloadTavern = { browserHost.reloadTavernWebView(source = "android_host_bridge") },
             hostVersionInfoJson = ::buildAndroidHostVersionInfoJson,
+            postEvent = ::handleNativeBridgeEvent,
             recordWebPerformanceDiagnosticPayload = { payload ->
                 recordWebPerformanceDiagnosticPayload(payload)
             }
+        )
+    }
+
+    private fun handleNativeBridgeEvent(name: String, payloadJson: String?) {
+        if (name != "js_error") {
+            recordBridgeStatus(name, payloadJson)
+        }
+        val event = runCatching {
+            GenerationStatusEvent.from(name, payloadJson)
+        }.onFailure { error ->
+            recordDefaultHostDiagnostic(
+                category = "native_bridge",
+                body = "event=parse_failed name=$name error=${error.message ?: error.javaClass.simpleName}"
+            )
+        }.getOrNull() ?: return
+
+        generationStatusController.handle(event)
+    }
+
+    private fun recordBridgeStatus(name: String, payloadJson: String?) {
+        val payload = runCatching {
+            payloadJson?.takeIf { it.isNotBlank() }?.let(::JSONObject)
+        }.getOrNull()
+        val source = payload?.optString("source").orEmpty()
+        val bridge = payload?.optString("bridge").orEmpty()
+        val version = payload?.optString("version")?.takeIf { it.isNotBlank() }
+        val isNativeBridge = source == TAVERN_NATIVE_BRIDGE_ID || bridge == TAVERN_NATIVE_BRIDGE_ID
+        appGraph.tavernShellSettingsRepository.recordBridgeEvent(
+            eventName = name,
+            isNativeBridge = isNativeBridge,
+            version = version
         )
     }
 
@@ -1007,5 +1069,9 @@ class MainActivity : AppCompatActivity() {
                 browserHost.reloadTavernUiIfPossible(processManager.currentSnapshot())
             }
         ).launch()
+    }
+
+    private companion object {
+        private const val TAVERN_NATIVE_BRIDGE_ID = "third-party/tavern-native-bridge"
     }
 }

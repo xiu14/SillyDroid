@@ -27,6 +27,7 @@ import com.jm.sillydroid.core.model.settings.BrowserZoomOptions
 import com.jm.sillydroid.domain.bootstrap.BootstrapController
 import com.jm.sillydroid.domain.bootstrap.RuntimeConfigRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
+import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
 import com.jm.sillydroid.feature.main.R
 import com.jm.sillydroid.feature.main.diagnostics.formatTrimMemoryLevel
 import com.jm.sillydroid.feature.main.diagnostics.normalizeDiagnosticValue
@@ -64,6 +65,7 @@ class TavernGeckoViewHost(
     private val activity: AppCompatActivity,
     private val homeViewModel: HomeViewModel,
     private val hostConfigStore: HostPreferencesRepository,
+    private val tavernShellSettingsRepository: TavernShellSettingsRepository,
     private val runtimeConfigRepository: RuntimeConfigRepository,
     private val processManager: BootstrapController,
     private val bridgeInstaller: BrowserHostBridgeInstaller,
@@ -142,7 +144,8 @@ class TavernGeckoViewHost(
             activity = activity,
             diagnosticSink = HostDiagnosticSink { category, body ->
                 recordHostDiagnostic(category = category, body = body)
-            }
+            },
+            tavernShellSettingsRepository = tavernShellSettingsRepository
         )
     }
 
@@ -309,6 +312,14 @@ class TavernGeckoViewHost(
         )
         session.reload()
         return true
+    }
+
+    override fun scrollChatToLatestFromNative(): Boolean {
+        recordHostDiagnostic(
+            category = "geckoview",
+            body = "event=scroll_chat_to_latest_skipped reason=direct_js_eval_unavailable"
+        )
+        return false
     }
 
     override fun updateRefreshLayoutEnabled() {

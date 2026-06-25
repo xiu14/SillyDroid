@@ -75,6 +75,54 @@
                 android:textColor="?attr/colorOnSurface" />
         </LinearLayout>
 
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/tavernForegroundPill"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="@dimen/sillydroid_space_sm"
+            android:clickable="true"
+            android:contentDescription="@string/tavern_foreground_pill_description"
+            android:focusable="true"
+            android:visibility="gone"
+            app:cardBackgroundColor="#EA7B8288"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="8dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:id="@+id/tavernForegroundPillTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:textColor="@android:color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tavernForegroundPillSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/sillydroid_space_sm"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:maxWidth="160dp"
+                    android:maxLines="1"
+                    android:textColor="#BFFFFFFF"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <LinearLayout
             android:id="@+id/bootstrapOverlay"
             android:layout_width="match_parent"

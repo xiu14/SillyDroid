@@ -99,6 +99,8 @@ class UnavailableBrowserHost(
         return false
     }
 
+    override fun scrollChatToLatestFromNative(): Boolean = false
+
     override fun updateRefreshLayoutEnabled() {
         browserFrame.isEnabled = false
     }

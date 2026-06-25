@@ -40,6 +40,7 @@ class BootstrapSettingsScreenController(
     private val tabLayout: TabLayout,
     private val toolbarAboutEntryView: TextView,
     private val dataPanelView: android.view.View,
+    private val tavernShellPanelView: android.view.View,
     private val extensionsPanelView: android.view.View,
     private val logsPanelView: android.view.View,
     private val logsScrollView: NestedScrollView,
@@ -323,6 +324,7 @@ class BootstrapSettingsScreenController(
     private fun setupTabs() {
         if (tabLayout.tabCount == 0) {
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_data))
+            tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_tavern_shell))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_settings))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_extensions))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_terminal))
@@ -372,6 +374,7 @@ class BootstrapSettingsScreenController(
         val isTerminalTab = tab == SettingsTab.TERMINAL
         scrollView.isVisible = !isExtensionsTab && !isLogsTab && !isTerminalTab
         dataPanelView.isVisible = tab == SettingsTab.DATA
+        tavernShellPanelView.isVisible = tab == SettingsTab.TAVERN_SHELL
         extensionsPanelView.isVisible = isExtensionsTab
         logsPanelView.isVisible = isLogsTab
         terminalPanelView.isVisible = isTerminalTab
@@ -530,7 +533,11 @@ class BootstrapSettingsScreenController(
             // 页签外壳和单项尺寸统一走 token，避免 XML 与运行时二次压缩出现两套间距标准。
             val tabLayoutHeight = dimen(R.dimen.sillydroid_tab_strip_height)
             val tabItemHeight = dimen(R.dimen.sillydroid_tab_item_height)
-            val tabHorizontalPadding = dimen(R.dimen.sillydroid_tab_horizontal_padding)
+            val tabHorizontalPadding = if (tabLayout.tabCount >= 6) {
+                dimen(R.dimen.sillydroid_space_xs)
+            } else {
+                dimen(R.dimen.sillydroid_tab_horizontal_padding)
+            }
 
             tabLayout.minimumHeight = 0
             tabLayout.setPadding(0, 0, 0, 0)

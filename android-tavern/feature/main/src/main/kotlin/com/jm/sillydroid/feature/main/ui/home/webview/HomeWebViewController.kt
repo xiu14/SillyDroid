@@ -42,6 +42,7 @@ class HomeWebViewController(
     private val onHttpAuthRequest: (HttpAuthPromptRequest) -> Unit = { request -> request.onCancel() },
     private val onMainFrameLocalLoadError: (WebViewLocalLoadErrorInfo) -> Unit,
     private val onRendererGone: (WebViewRendererGoneInfo) -> Unit,
+    private val interceptRequest: (WebResourceRequest) -> WebResourceResponse? = { null },
     private val onDownloadRequested: (BrowserDownloadRequest) -> Unit,
     private val onShowFileChooser: (ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Unit,
     private val downloadDiagnosticSink: (String) -> Unit = {},
@@ -124,6 +125,14 @@ class HomeWebViewController(
                 } else {
                     false
                 }
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                if (request == null) return null
+                return interceptRequest(request) ?: super.shouldInterceptRequest(view, request)
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {

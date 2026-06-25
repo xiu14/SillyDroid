@@ -65,6 +65,7 @@ class GeckoViewBrowserHostBridgeInstaller(
             applySystemBarsBackgroundColors = actions.applySystemBarsBackgroundColors,
             reloadTavern = actions.reloadTavern,
             hostVersionInfoJson = actions.hostVersionInfoJson,
+            postEventPayload = actions.postEvent,
             recordWebPerformanceDiagnosticPayload = actions.recordWebPerformanceDiagnosticPayload
         )
     }
@@ -262,6 +263,12 @@ class GeckoViewBrowserHostBridgeInstaller(
             }
             "reloadTavern" -> androidHostBridge.reloadTavern()
             "getHostVersionInfo" -> androidHostBridge.getHostVersionInfo()
+            "postEvent" -> {
+                androidHostBridge.postEvent(
+                    GeckoNativeMessageCodec.objectString(data, "name"),
+                    GeckoNativeMessageCodec.objectString(data, "payloadJson").ifBlank { null }
+                )
+            }
             "recordWebPerformanceDiagnostic" -> androidHostBridge.recordWebPerformanceDiagnostic(data.asString())
             "notification.show" -> notificationBridge.showNotification(data.asString())
             "notification.playAlertSound" -> notificationBridge.playAlertSound()

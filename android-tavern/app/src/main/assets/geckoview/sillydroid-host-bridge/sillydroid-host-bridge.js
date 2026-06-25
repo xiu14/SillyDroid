@@ -366,6 +366,12 @@
           refreshHostVersionInfo();
           return JSON.stringify(hostVersionInfoCache || defaultHostVersionInfo);
         },
+        postEvent: function(name, payloadJson) {
+          return postBoolean('postEvent', {
+            name: String(name || ''),
+            payloadJson: payloadJson == null ? '' : String(payloadJson)
+          });
+        },
         recordWebPerformanceDiagnostic: function(payload) {
           return postBoolean('recordWebPerformanceDiagnostic', String(payload || ''));
         }

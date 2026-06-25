@@ -130,10 +130,55 @@ case " ${NODE_OPTIONS:-} " in
         ;;
 esac
 
+start_st_remote_backup() {
+    helper="$BOOTSTRAP_ROOT/scripts/start-st-remote-backup.sh"
+    if [ ! -f "$helper" ]; then
+        return 0
+    fi
+
+    sh "$helper" "$NODE_BIN" || true
+}
+
+ST_REMOTE_BACKUP_PID="$(start_st_remote_backup)"
+TAVERN_PID=""
+cleanup_done=0
+
+cleanup_background_services() {
+    if [ "$cleanup_done" = "1" ]; then
+        return 0
+    fi
+    cleanup_done=1
+
+    case "$ST_REMOTE_BACKUP_PID" in
+        ''|*[!0-9]*)
+            ;;
+        *)
+            kill "$ST_REMOTE_BACKUP_PID" 2>/dev/null || true
+            ;;
+    esac
+
+    case "$TAVERN_PID" in
+        ''|*[!0-9]*)
+            ;;
+        *)
+            kill "$TAVERN_PID" 2>/dev/null || true
+            ;;
+    esac
+}
+
+trap 'cleanup_background_services' TERM INT HUP EXIT
+
 # 监听开关与监听地址必须交由用户 config.yaml 决定，不能在宿主入口里写死；
 # 否则“启用外部访问”会被 CLI 参数覆盖，最终只能监听 127.0.0.1。
-exec "$NODE_BIN" server.js \
+"$NODE_BIN" server.js \
     --port "$TAVERN_PORT" \
     --browserLaunchEnabled false \
     --dataRoot "$TAVERN_DATA_ROOT/data" \
-    --configPath "$TAVERN_SERVER_DIR/config.yaml"
+    --configPath "$TAVERN_SERVER_DIR/config.yaml" &
+TAVERN_PID="$!"
+
+wait "$TAVERN_PID"
+exit_code="$?"
+trap - TERM INT HUP EXIT
+cleanup_background_services
+exit "$exit_code"

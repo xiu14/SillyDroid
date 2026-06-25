@@ -62,5 +62,6 @@ data class BrowserHostBridgeActions(
     val applySystemBarsBackgroundColors: (String, String) -> Unit,
     val reloadTavern: () -> Unit,
     val hostVersionInfoJson: () -> String,
+    val postEvent: (String, String?) -> Unit = { _, _ -> },
     val recordWebPerformanceDiagnosticPayload: (String) -> Unit = {}
 )

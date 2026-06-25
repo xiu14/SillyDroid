@@ -25,6 +25,7 @@ interface TavernBrowserHost {
     fun hideForBootstrapRestart()
     fun reloadTavernUiIfPossible(snapshot: BootstrapSessionSnapshot)
     fun reloadTavernWebView(source: String): Boolean
+    fun scrollChatToLatestFromNative(): Boolean
     fun updateRefreshLayoutEnabled()
     fun resetRefreshOnBootstrapEvent()
     fun onImeVisibilityChanged(visible: Boolean)

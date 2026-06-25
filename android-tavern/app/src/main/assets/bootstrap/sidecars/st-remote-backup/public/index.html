@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>星际备份中枢</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        /* --- Base & Background --- */
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: #030508;
+            background-image:
+                radial-gradient(circle at 15% 50%, rgba(76, 29, 149, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.1) 0%, transparent 40%);
+            color: #e2e8f0;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        /* Sci-Fi Grid Background */
+        .bg-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            w: 100%;
+            h: 100%;
+            z-index: -1;
+            background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+        }
+
+        /* Floating Particles (Stars) */
+        .stars {
+            position: fixed;
+            inset: 0;
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle var(--dur) ease-in-out infinite;
+            opacity: var(--op);
+            width: var(--sz);
+            height: var(--sz);
+            top: var(--y);
+            left: var(--x);
+        }
+
+        @keyframes twinkle {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: var(--op);
+            }
+
+            50% {
+                transform: scale(1.5);
+                opacity: 1;
+            }
+        }
+
+        /* --- Glassmorphism --- */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .glass-input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .glass-input:focus {
+            background: rgba(0, 0, 0, 0.5);
+            border-color: rgba(6, 182, 212, 0.5);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
+            outline: none;
+        }
+
+        /* --- Typography --- */
+        .font-tech {
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* --- Animations --- */
+        .btn-hover-effect {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-hover-effect:active {
+            transform: scale(0.96);
+        }
+
+        .list-enter {
+            animation: slideUpFade 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        @keyframes slideUpFade {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Loader */
+        .loader-ring {
+            width: 1.5em;
+            height: 1.5em;
+            border-radius: 50%;
+            border: 2px solid rgba(6, 182, 212, 0.3);
+            border-top-color: #06b6d4;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body class="flex flex-col items-center justify-center p-4">
+    <div class="bg-grid"></div>
+    <div class="stars" id="star-layer"></div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="w-full max-w-sm transition-all duration-500">
+        <div class="glass-panel rounded-3xl p-8 relative overflow-hidden group">
+            <div
+                class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-purple-500 to-amber-500 opacity-80">
+            </div>
+
+            <div class="text-center mb-10 mt-2">
+                <div
+                    class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-purple-500/20 mb-4 border border-white/10 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                    <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.131A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.2-2.873.571-4.282m1.516 4.15l-.813 1.696A9.973 9.973 0 006 19.5">
+                        </path>
+                    </svg>
+                </div>
+                <h1 class="font-bold text-3xl tracking-widest text-white">系统入口</h1>
+                <p class="text-xs text-slate-400 font-tech mt-2 tracking-[0.2em] opacity-80">SECURE ACCESS LEVEL 1</p>
+            </div>
+
+            <div class="space-y-4 relative z-10">
+                <div class="group/input">
+                    <label
+                        class="block text-[10px] font-bold text-cyan-400 mb-1 ml-1 opacity-0 group-hover/input:opacity-100 transition-opacity">识别码
+                        (ID)</label>
+                    <input id="user" type="text" placeholder="用户名"
+                        class="glass-input w-full rounded-xl px-4 py-3.5 text-sm placeholder-slate-600 focus:placeholder-cyan-900/0">
+                </div>
+                <div class="group/input">
+                    <label
+                        class="block text-[10px] font-bold text-cyan-400 mb-1 ml-1 opacity-0 group-hover/input:opacity-100 transition-opacity">访问密钥
+                        (KEY)</label>
+                    <input id="pass" type="password" placeholder="密码"
+                        class="glass-input w-full rounded-xl px-4 py-3.5 text-sm placeholder-slate-600 focus:placeholder-cyan-900/0">
+                </div>
+            </div>
+
+            <div id="login-status" class="h-5 text-center text-red-400 text-xs mt-4 font-mono"></div>
+
+            <button id="connect-btn"
+                class="btn-hover-effect w-full mt-6 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-cyan-900/30 flex justify-center items-center gap-3 group/btn">
+                <div id="connect-loader" class="hidden loader-ring text-white w-4 h-4 border-2"></div>
+                <span id="connect-text" class="tracking-wider">建立连接</span>
+                <svg class="w-4 h-4 text-cyan-200 transition-transform group-hover/btn:translate-x-1" fill="none"
+                    stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3">
+                    </path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Console -->
+    <div id="console-screen" class="hidden w-full max-w-6xl mx-auto flex-1 flex flex-col gap-6 h-[90vh]">
+
+        <!-- Header -->
+        <header class="glass-panel px-6 py-4 rounded-2xl flex justify-between items-center shrink-0">
+            <div class="flex items-center gap-4">
+                <div class="relative">
+                    <div class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse z-10 relative"></div>
+                    <div class="absolute inset-0 bg-green-500 rounded-full animate-ping opacity-75"></div>
+                </div>
+                <div>
+                    <h2 class="text-xl font-bold text-white tracking-wide leading-none">星际备份中枢</h2>
+                    <p class="text-[10px] text-slate-400 font-mono mt-0.5">NODE: <span
+                            class="text-cyan-400">ONLINE</span></p>
+                </div>
+            </div>
+
+            <div id="status-badge"
+                class="px-4 py-1.5 rounded-full border border-slate-700 bg-slate-900/50 flex items-center gap-2 transition-colors">
+                <div id="loader" class="loader-ring text-cyan-400 w-3 h-3 border-[1.5px] hidden"></div>
+                <span id="status-text" class="text-xs font-mono text-slate-400">READY</span>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 overflow-hidden">
+
+            <!-- Left Sidebar / Actions -->
+            <div class="lg:col-span-1 flex flex-col gap-4 overflow-y-auto pb-safe">
+                <!-- Action Card -->
+                <div class="glass-panel p-5 rounded-2xl space-y-3">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">操作指令</h3>
+
+                    <button id="backup"
+                        class="btn-hover-effect w-full bg-slate-800 hover:bg-gradient-to-r hover:from-cyan-900/50 hover:to-blue-900/50 border border-slate-700 hover:border-cyan-500/50 p-4 rounded-xl flex items-center gap-4 group">
+                        <div
+                            class="p-2.5 rounded-lg bg-cyan-500/10 text-cyan-400 group-hover:bg-cyan-500 group-hover:text-white transition-colors">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4">
+                                </path>
+                            </svg>
+                        </div>
+                        <div class="text-left">
+                            <div class="text-sm font-bold text-slate-200">新建备份</div>
+                            <div class="text-[10px] text-slate-500 font-tech">CREATE SNAPSHOT</div>
+                        </div>
+                    </button>
+
+                    <div class="grid grid-cols-3 gap-3">
+                        <button id="refresh"
+                            class="btn-hover-effect p-3 rounded-xl bg-slate-900/40 border border-slate-800 hover:border-slate-600 text-slate-400 hover:text-white flex flex-col items-center gap-1">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                                </path>
+                            </svg>
+                            <span class="text-[10px] font-bold">刷新</span>
+                        </button>
+                        <button id="health"
+                            class="btn-hover-effect p-3 rounded-xl bg-slate-900/40 border border-slate-800 hover:border-slate-600 text-slate-400 hover:text-green-400 flex flex-col items-center gap-1">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span class="text-[10px] font-bold">状态</span>
+                        </button>
+                        <button id="settings-btn"
+                            class="btn-hover-effect p-3 rounded-xl bg-slate-900/40 border border-slate-800 hover:border-purple-600 text-slate-400 hover:text-purple-400 flex flex-col items-center gap-1">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                                </path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            <span class="text-[10px] font-bold">设置</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Logger Console -->
+                <div class="glass-panel rounded-2xl flex-1 flex flex-col overflow-hidden min-h-[200px]">
+                    <div class="px-4 py-3 border-b border-white/5 bg-black/20 flex justify-between items-center">
+                        <span class="text-[10px] font-bold text-slate-500">运行日志</span>
+                        <div class="flex gap-2">
+                            <button id="log-toggle"
+                                class="text-[10px] text-cyan-500/80 hover:text-cyan-400 font-mono transition">实时</button>
+                            <button id="log-clear"
+                                class="text-[10px] text-slate-600 hover:text-red-400 font-mono transition">清空</button>
+                        </div>
+                    </div>
+                    <div class="flex-1 bg-black/40 p-3 overflow-hidden relative">
+                        <div id="log-box"
+                            class="absolute inset-3 overflow-y-auto font-mono text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap break-all pr-2">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Content / File List -->
+            <div class="lg:col-span-3 glass-panel rounded-2xl flex flex-col overflow-hidden">
+                <div
+                    class="px-6 py-4 border-b border-white/5 bg-white/5 flex justify-between items-end backdrop-blur-md sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold text-white tracking-wide">归档数据库</h3>
+                        <p class="text-[10px] text-slate-400 font-tech">LOCAL STORAGE / VOLUME 1</p>
+                    </div>
+                    <span id="file-count"
+                        class="text-xs font-mono font-bold text-amber-500 bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20">0
+                        FILES</span>
+                </div>
+
+                <div id="list-container" class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3 relative">
+                    <!-- Empty State -->
+                    <div id="empty-state"
+                        class="hidden absolute inset-0 flex flex-col items-center justify-center text-slate-600 pointer-events-none">
+                        <svg class="w-16 h-16 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4">
+                            </path>
+                        </svg>
+                        <span class="font-bold text-sm tracking-widest opacity-50">暂无归档数据</span>
+                    </div>
+                    <div id="list" class="space-y-3 pb-safe"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div id="custom-confirm"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-panel w-full max-w-sm rounded-2xl p-0 overflow-hidden scale-95 transition-transform duration-300 transform"
+            id="confirm-box">
+            <div class="p-6 text-center">
+                <div id="confirm-icon-container"
+                    class="mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center"></div>
+                <h3 id="confirm-title" class="text-xl font-bold tracking-wide text-white mb-2"></h3>
+                <div id="confirm-message" class="text-sm text-slate-300 leading-relaxed opacity-90"></div>
+            </div>
+            <div class="grid grid-cols-2 text-sm font-medium border-t border-white/10 divide-x divide-white/10">
+                <button id="confirm-cancel" class="py-4 hover:bg-white/5 text-slate-400 transition-colors">取消</button>
+                <button id="confirm-ok" class="py-4 text-white transition-colors"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-panel w-full max-w-md rounded-2xl overflow-hidden scale-95 transition-transform duration-300 transform"
+            id="settings-box">
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-white/10 bg-gradient-to-r from-purple-900/30 to-cyan-900/30">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2 rounded-lg bg-purple-500/20 text-purple-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                                </path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white">系统设置</h3>
+                            <p class="text-[10px] text-slate-400 font-tech">SERVICE CONFIGURATION</p>
+                        </div>
+                    </div>
+                    <button id="settings-close"
+                        class="p-2 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div class="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+                <!-- Port -->
+                <div class="space-y-1.5">
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                        <span class="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
+                        服务端口
+                    </label>
+                    <input id="cfg-port" type="number" placeholder="8787"
+                        class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                </div>
+
+                <!-- Data Dir -->
+                <div class="space-y-1.5">
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        数据目录
+                    </label>
+                    <input id="cfg-data-dir" type="text" placeholder="/root/sillytavern/data"
+                        class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                </div>
+
+                <!-- Backup Dir -->
+                <div class="space-y-1.5">
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                        备份目录
+                    </label>
+                    <input id="cfg-backup-dir" type="text" placeholder="/root/st-remote-backup/backups"
+                        class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                </div>
+
+                <!-- User & Pass -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-1.5">
+                        <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                            <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                            用户名
+                        </label>
+                        <input id="cfg-user" type="text" placeholder="st"
+                            class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                            <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                            新密码
+                        </label>
+                        <input id="cfg-pass" type="password" placeholder="留空则不修改"
+                            class="glass-input w-full rounded-xl px-4 py-3 text-sm">
+                    </div>
+                </div>
+
+                <!-- R2 Sync -->
+                <div class="pt-2 border-t border-white/5">
+                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Cloudflare R2 配置</label>
+                    <p class="text-xs text-slate-500 leading-relaxed mb-4">
+                        本地打包后会上传到 R2，同一天只保留一个备份文件。其他部署节点只要填写相同的 R2 信息和本地目录，就能直接拉取并恢复备份。
+                    </p>
+
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="space-y-1.5">
+                                <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                    Account ID
+                                </label>
+                                <input id="cfg-r2-account-id" type="text" placeholder="Cloudflare Account ID"
+                                    class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
+                                    Bucket
+                                </label>
+                                <input id="cfg-r2-bucket" type="text" placeholder="st-backups"
+                                    class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                Access Key ID
+                            </label>
+                            <input id="cfg-r2-access-key-id" type="text" placeholder="R2 Access Key ID"
+                                class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="space-y-1.5">
+                                <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                                    Secret Access Key
+                                </label>
+                                <input id="cfg-r2-secret-access-key" type="password" placeholder="留空则不修改"
+                                    class="glass-input w-full rounded-xl px-4 py-3 text-sm">
+                            </div>
+                            <div class="space-y-1.5">
+                                <label class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-300"></span>
+                                    Prefix
+                                </label>
+                                <input id="cfg-r2-prefix" type="text" placeholder="daily-backups"
+                                    class="glass-input w-full rounded-xl px-4 py-3 text-sm font-mono">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Message -->
+                <div id="settings-status" class="hidden text-center text-sm py-2 rounded-lg"></div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-6 py-4 border-t border-white/10 bg-black/20 flex gap-3">
+                <button id="settings-save"
+                    class="flex-1 btn-hover-effect bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    保存配置
+                </button>
+                <button id="settings-restart"
+                    class="btn-hover-effect bg-gradient-to-r from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white font-bold py-3 px-5 rounded-xl flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        </path>
+                    </svg>
+                    重启
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Modal -->
+    <div id="progress-modal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+        <div class="glass-panel w-full max-w-sm rounded-2xl p-6 scale-95 transition-transform duration-300 transform"
+            id="progress-box">
+            <div class="text-center mb-6">
+                <div id="progress-icon"
+                    class="mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-cyan-900/20 text-cyan-500 border border-cyan-500/30">
+                    <svg class="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                </div>
+                <h3 id="progress-title" class="text-xl font-bold tracking-wide text-white mb-1">下载中</h3>
+                <p id="progress-filename" class="text-xs text-slate-400 font-mono truncate px-4"></p>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mb-4">
+                <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="progress-bar"
+                        class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                        style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center text-xs">
+                <span id="progress-percent" class="text-cyan-400 font-bold">0%</span>
+                <span id="progress-size" class="text-slate-500 font-mono">0 MB / 0 MB</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // Star Background Gen
+        const starsContainer = document.getElementById('star-layer');
+        for (let i = 0; i < 60; i++) {
+            const s = document.createElement('div');
+            s.className = 'star';
+            s.style.setProperty('--x', Math.random() * 100 + '%');
+            s.style.setProperty('--y', Math.random() * 100 + '%');
+            s.style.setProperty('--sz', Math.random() * 2 + 1 + 'px');
+            s.style.setProperty('--op', Math.random() * 0.5 + 0.2);
+            s.style.setProperty('--dur', Math.random() * 3 + 2 + 's');
+            starsContainer.appendChild(s);
+        }
+
+        /* --- Logic (Preserved & Enhanced) --- */
+        (() => {
+            const $ = s => document.querySelector(s);
+
+            // State
+            let logAuto = true;
+            let logTimer = null;
+            const els = {
+                loginScreen: $('#login-screen'),
+                consoleScreen: $('#console-screen'),
+                user: $('#user'),
+                pass: $('#pass'),
+                connectBtn: $('#connect-btn'),
+                loginStatus: $('#login-status'),
+                list: $('#list'),
+                logBox: $('#log-box'),
+                statusBadge: $('#status-badge'),
+                statusText: $('#status-text'),
+                loader: $('#loader'),
+                countBadge: $('#file-count'),
+                confirmModal: $('#custom-confirm'),
+                confirmBox: $('#confirm-box'),
+                emptyState: $('#empty-state'),
+                // Settings Modal
+                settingsModal: $('#settings-modal'),
+                settingsBox: $('#settings-box'),
+                cfgPort: $('#cfg-port'),
+                cfgDataDir: $('#cfg-data-dir'),
+                cfgBackupDir: $('#cfg-backup-dir'),
+                cfgUser: $('#cfg-user'),
+                cfgPass: $('#cfg-pass'),
+                cfgR2AccountId: $('#cfg-r2-account-id'),
+                cfgR2Bucket: $('#cfg-r2-bucket'),
+                cfgR2AccessKeyId: $('#cfg-r2-access-key-id'),
+                cfgR2SecretAccessKey: $('#cfg-r2-secret-access-key'),
+                cfgR2Prefix: $('#cfg-r2-prefix'),
+                settingsStatus: $('#settings-status'),
+                // Progress Modal
+                progressModal: $('#progress-modal'),
+                progressBox: $('#progress-box'),
+                progressIcon: $('#progress-icon'),
+                progressTitle: $('#progress-title'),
+                progressFilename: $('#progress-filename'),
+                progressBar: $('#progress-bar'),
+                progressPercent: $('#progress-percent'),
+                progressSize: $('#progress-size')
+            };
+
+            // Auth Utils
+            const auth = () => 'Basic ' + btoa(els.user.value + ':' + els.pass.value);
+            const saveCfg = () => localStorage.setItem('rb-ui-auth', JSON.stringify({ u: els.user.value, p: els.pass.value }));
+            const loadCfg = () => {
+                try {
+                    const c = JSON.parse(localStorage.getItem('rb-ui-auth') || '{}');
+                    if (c.u) els.user.value = c.u;
+                    if (c.p) els.pass.value = c.p;
+                } catch { }
+            };
+
+            // API wrapper
+            async function api(method, path) {
+                try {
+                    const res = await fetch(path, { method, headers: { 'Authorization': auth() } });
+                    if (res.status === 401) return { ok: false, error: '权限验证失败' };
+                    return await res.json();
+                } catch (e) { return { ok: false, raw: '网络连接错误' }; }
+            }
+
+            // Status UI
+            function setStatus(msg, type = 'idle') {
+                els.statusText.textContent = msg;
+                els.loader.classList.toggle('hidden', type !== 'loading');
+
+                // Color states
+                els.statusBadge.classList.remove('border-red-900/50', 'bg-red-900/20', 'border-green-900/50', 'bg-green-900/20', 'border-slate-700', 'bg-slate-900/50');
+                els.statusText.classList.remove('text-red-400', 'text-green-400', 'text-slate-400');
+
+                if (type === 'error') {
+                    els.statusBadge.classList.add('border-red-900/50', 'bg-red-900/20');
+                    els.statusText.classList.add('text-red-400');
+                } else if (type === 'success') {
+                    els.statusBadge.classList.add('border-green-900/50', 'bg-green-900/20');
+                    els.statusText.classList.add('text-green-400');
+                } else { // idle / loading
+                    els.statusBadge.classList.add('border-slate-700', 'bg-slate-900/50');
+                    els.statusText.classList.add('text-slate-400');
+                }
+            }
+
+            // Connection
+            async function connect() {
+                if (!els.user.value || !els.pass.value) return els.loginStatus.textContent = "请输入访问凭证";
+                els.loginStatus.textContent = "";
+                $('#connect-text').textContent = "正在验证...";
+                $('#connect-loader').classList.remove('hidden');
+
+                const r = await api('GET', '/health');
+
+                if (r.ok) {
+                    saveCfg();
+                    // Fancy Transition
+                    els.loginScreen.classList.add('opacity-0', 'scale-90');
+                    setTimeout(() => {
+                        els.loginScreen.classList.add('hidden');
+                        els.consoleScreen.classList.remove('hidden');
+                        refresh();
+                        startLogs();
+                    }, 500);
+                } else {
+                    els.loginStatus.textContent = r.error || "连接因故失败";
+                    $('#connect-text').textContent = "建立连接";
+                    $('#connect-loader').classList.add('hidden');
+                }
+            }
+
+            // File List & Parsing
+            async function refresh() {
+                setStatus('数据同步中...', 'loading');
+                els.list.innerHTML = '';
+                const r = await api('GET', '/list');
+
+                if (!r.ok) {
+                    setStatus('同步失败', 'error');
+                    return;
+                }
+
+                setStatus(r.warning ? '已同步，R2 部分异常' : '系统就绪', r.warning ? 'error' : 'success');
+                els.countBadge.textContent = `${r.items.length} 个文件`;
+                els.emptyState.classList.toggle('hidden', r.items.length > 0);
+
+                r.items.forEach((it, idx) => {
+                    const parsedTime = it.mtime ? new Date(it.mtime) : null;
+                    const displayTime = parsedTime && !Number.isNaN(parsedTime.getTime())
+                        ? parsedTime.toLocaleString('zh-CN', { hour12: false })
+                        : '未知时间';
+                    const sizeMB = (it.size / 1024 / 1024).toFixed(2);
+                    const sourceText = it.local && it.remote ? '本地 + R2' : (it.remote ? 'R2' : '本地');
+                    const sourceClass = it.local && it.remote
+                        ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20'
+                        : (it.remote
+                            ? 'text-violet-300 bg-violet-500/10 border-violet-500/20'
+                            : 'text-sky-300 bg-sky-500/10 border-sky-500/20');
+                    const uploadBtnHtml = it.local && !it.remote ? `
+                            <button class="btn-up p-2 rounded-lg bg-slate-800/50 hover:bg-indigo-600/20 text-slate-400 hover:text-indigo-300 transition-colors border border-transparent hover:border-indigo-500/30" title="上传到 R2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V8m0 0l-3 3m3-3l3 3m7 5a2 2 0 002-2V9a2 2 0 00-2-2h-2M5 16a2 2 0 002 2h10"></path></svg>
+                            </button>
+                    ` : '';
+
+                    const el = document.createElement('div');
+                    el.className = 'list-enter group flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 transition-all hover:border-cyan-500/30 gap-4';
+                    el.style.animationDelay = `${idx * 50}ms`;
+
+                    el.innerHTML = `
+                        <div class="flex items-center gap-4 min-w-0">
+                            <div class="p-3 rounded-lg bg-black/30 border border-white/5 text-cyan-500 shrink-0">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                            </div>
+                            <div class="min-w-0">
+                                <h4 class="text-sm font-bold text-slate-200 truncate font-mono tracking-tight">${it.name}</h4>
+                                <div class="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                                    <span class="text-[10px] font-tech text-cyan-400 bg-cyan-900/20 px-1.5 rounded border border-cyan-500/20">${sizeMB} MB</span>
+                                    <span class="text-[10px] px-1.5 rounded border ${sourceClass}">${sourceText}</span>
+                                    <span class="text-[10px] font-mono text-slate-500">${displayTime}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-2 border-t sm:border-t-0 border-white/5 pt-3 sm:pt-0">
+                            ${uploadBtnHtml}
+                            <button class="btn-dl relative overflow-hidden p-2 rounded-lg bg-slate-800/50 hover:bg-cyan-600/20 text-slate-400 hover:text-cyan-400 transition-colors border border-transparent hover:border-cyan-500/30" title="下载">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            </button>
+                            <button class="btn-rst p-2 rounded-lg bg-slate-800/50 hover:bg-amber-600/20 text-slate-400 hover:text-amber-400 transition-colors border border-transparent hover:border-amber-500/30" title="恢复">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            </button>
+                            <button class="btn-del p-2 rounded-lg bg-slate-800/50 hover:bg-red-600/20 text-slate-400 hover:text-red-400 transition-colors border border-transparent hover:border-red-500/30" title="删除">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    `;
+
+                    // Logic Binding
+                    const uploadBtn = el.querySelector('.btn-up');
+                    if (uploadBtn) {
+                        uploadBtn.onclick = () => confirmAction(
+                            '上传本地备份到 R2',
+                            `是否将本地备份 <br><b class="text-indigo-300 font-mono text-xs">${it.name}</b><br>手动上传到 R2？<br><br><span class="text-slate-500 text-xs">适合自动上传失败后的补传场景。</span>`,
+                            async () => {
+                                setStatus('正在上传到 R2...', 'loading');
+                                const res = await api('POST', `/upload-r2?name=${encodeURIComponent(it.name)}`);
+                                if (res.ok) {
+                                    setStatus(`上传完成${res.attempts > 1 ? `，第 ${res.attempts} 次成功` : ''}`, 'success');
+                                    refresh();
+                                } else {
+                                    setStatus('上传失败', 'error');
+                                }
+                            },
+                            'upload'
+                        );
+                    }
+
+                    el.querySelector('.btn-dl').onclick = function () { downloadFile(it.name, this); };
+
+                    el.querySelector('.btn-rst').onclick = () => confirmAction(
+                        '启动恢复程序',
+                        `是否确认使用归档 <br><b class="text-amber-400 font-mono text-xs">${it.name}</b><br>覆盖当前主数据？<br><br><span class="text-amber-500/80 text-xs border border-amber-500/20 px-2 py-1 rounded bg-amber-500/5">警告：自归档生成后产生的新进度将永久丢失。</span>`,
+                        async () => {
+                            setStatus('正在恢复...', 'loading');
+                            showProgress('恢复中', it.name, 'restore');
+
+                            // 模拟进度动画（因为后端没有进度反馈）
+                            let fakeProgress = 0;
+                            const progressInterval = setInterval(() => {
+                                fakeProgress += Math.random() * 15;
+                                if (fakeProgress > 90) fakeProgress = 90;
+                                updateProgress(fakeProgress, 100);
+                            }, 200);
+
+                            try {
+                                const res = await api('POST', `/restore?name=${encodeURIComponent(it.name)}`);
+                                clearInterval(progressInterval);
+                                updateProgress(100, 100);
+
+                                setTimeout(() => {
+                                    hideProgress();
+                                    setStatus(res.ok ? '恢复完成' : '恢复失败', res.ok ? 'success' : 'error');
+                                }, 500);
+                            } catch (e) {
+                                clearInterval(progressInterval);
+                                hideProgress();
+                                setStatus('恢复失败', 'error');
+                            }
+                        },
+                        'restore'
+                    );
+
+                    el.querySelector('.btn-del').onclick = () => confirmAction(
+                        '确认删除操作',
+                        `永久移除归档文件 <br><b class="text-red-400 font-mono text-xs">${it.name}</b>？<br><br><span class="text-slate-500 text-xs">此操作不可逆转。</span>`,
+                        async () => {
+                            setStatus('正在删除...', 'loading');
+                            const res = await api('DELETE', `/delete?name=${encodeURIComponent(it.name)}`);
+                            if (res.ok) refresh(); else setStatus('删除失败', 'error');
+                        },
+                        'delete'
+                    );
+
+                    els.list.appendChild(el);
+                });
+            }
+
+            // --- Progress Modal Functions ---
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            function showProgress(title, filename, type = 'download') {
+                els.progressTitle.textContent = title;
+                els.progressFilename.textContent = filename;
+                els.progressBar.style.width = '0%';
+                els.progressPercent.textContent = '0%';
+                els.progressSize.textContent = '准备中...';
+
+                // 更新图标和颜色
+                if (type === 'restore') {
+                    els.progressIcon.className = 'mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-amber-900/20 text-amber-500 border border-amber-500/30';
+                    els.progressIcon.innerHTML = `<svg class="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+                    els.progressBar.className = 'h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-300';
+                    els.progressPercent.className = 'text-amber-400 font-bold';
+                } else {
+                    els.progressIcon.className = 'mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-cyan-900/20 text-cyan-500 border border-cyan-500/30';
+                    els.progressIcon.innerHTML = `<svg class="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
+                    els.progressBar.className = 'h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300';
+                    els.progressPercent.className = 'text-cyan-400 font-bold';
+                }
+
+                els.progressModal.classList.remove('hidden');
+                setTimeout(() => {
+                    els.progressModal.classList.remove('opacity-0');
+                    els.progressBox.classList.remove('scale-95');
+                    els.progressBox.classList.add('scale-100');
+                }, 10);
+            }
+
+            function updateProgress(loaded, total) {
+                const percent = total > 0 ? Math.round((loaded / total) * 100) : 0;
+                els.progressBar.style.width = percent + '%';
+                els.progressPercent.textContent = percent + '%';
+                els.progressSize.textContent = `${formatBytes(loaded)} / ${formatBytes(total)}`;
+            }
+
+            function hideProgress() {
+                els.progressModal.classList.add('opacity-0');
+                els.progressBox.classList.add('scale-95');
+                els.progressBox.classList.remove('scale-100');
+                setTimeout(() => els.progressModal.classList.add('hidden'), 300);
+            }
+
+            // --- Download with Progress ---
+            async function downloadFile(name, btn) {
+                const originalContent = btn.innerHTML;
+                btn.innerHTML = `<div class="loader-ring w-4 h-4 border-2 mx-auto"></div>`;
+                btn.classList.add('cursor-not-allowed', 'opacity-70');
+
+                showProgress('下载中', name, 'download');
+
+                try {
+                    const res = await fetch(`/download?name=${encodeURIComponent(name)}`, { headers: { 'Authorization': auth() } });
+                    if (res.status === 401) throw new Error('Auth Failed');
+                    if (!res.ok) throw new Error('Download Fail');
+
+                    const contentLength = res.headers.get('content-length');
+                    const total = parseInt(contentLength, 10) || 0;
+
+                    if (total === 0 || !res.body) {
+                        // Fallback: 没有Content-Length或不支持ReadableStream
+                        const blob = await res.blob();
+                        updateProgress(blob.size, blob.size);
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = name;
+                        document.body.appendChild(a); a.click();
+                        window.URL.revokeObjectURL(url); a.remove();
+                    } else {
+                        // 使用 ReadableStream 读取进度
+                        const reader = res.body.getReader();
+                        const chunks = [];
+                        let loaded = 0;
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            chunks.push(value);
+                            loaded += value.length;
+                            updateProgress(loaded, total);
+                        }
+
+                        const blob = new Blob(chunks);
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = name;
+                        document.body.appendChild(a); a.click();
+                        window.URL.revokeObjectURL(url); a.remove();
+                    }
+
+                    setStatus('下载完成', 'success');
+                } catch (e) {
+                    setStatus('下载失败', 'error');
+                } finally {
+                    hideProgress();
+                    btn.innerHTML = originalContent;
+                    btn.classList.remove('cursor-not-allowed', 'opacity-70');
+                }
+            }
+            // -----------------------------
+
+            // Confirm Modal
+            function confirmAction(title, msg, callback, type) {
+                $('#confirm-title').textContent = title;
+                $('#confirm-message').innerHTML = msg;
+                const iconContainer = $('#confirm-icon-container');
+                const btn = $('#confirm-ok');
+
+                if (type === 'delete') {
+                    iconContainer.className = "mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-red-900/20 text-red-500 border border-red-500/30";
+                    iconContainer.innerHTML = `<svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+                    btn.className = "py-4 bg-red-600 hover:bg-red-500 text-white transition-colors font-bold tracking-wider";
+                    btn.textContent = "确认删除";
+                } else if (type === 'upload') {
+                    iconContainer.className = "mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-indigo-900/20 text-indigo-300 border border-indigo-500/30";
+                    iconContainer.innerHTML = `<svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16V8m0 0l-3 3m3-3l3 3m7 5a2 2 0 002-2V9a2 2 0 00-2-2h-2M5 16a2 2 0 002 2h10"></path></svg>`;
+                    btn.className = "py-4 bg-indigo-600 hover:bg-indigo-500 text-white transition-colors font-bold tracking-wider";
+                    btn.textContent = "上传到 R2";
+                } else {
+                    iconContainer.className = "mb-4 mx-auto w-16 h-16 rounded-full flex items-center justify-center bg-amber-900/20 text-amber-500 border border-amber-500/30";
+                    iconContainer.innerHTML = `<svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+                    btn.className = "py-4 bg-amber-600 hover:bg-amber-500 text-white transition-colors font-bold tracking-wider";
+                    btn.textContent = "执行恢复";
+                }
+
+                btn.onclick = () => { callback(); closeConfirm(); };
+
+                els.confirmModal.classList.remove('hidden');
+                setTimeout(() => {
+                    els.confirmModal.classList.remove('opacity-0');
+                    els.confirmBox.classList.remove('scale-95');
+                    els.confirmBox.classList.add('scale-100');
+                }, 10);
+            }
+
+            function closeConfirm() {
+                els.confirmModal.classList.add('opacity-0');
+                els.confirmBox.classList.add('scale-95');
+                setTimeout(() => els.confirmModal.classList.add('hidden'), 300);
+            }
+
+            // Logs
+            async function startLogs() {
+                if (logTimer) clearInterval(logTimer);
+                logTimer = setInterval(async () => {
+                    if (!logAuto) return;
+                    try {
+                        const r = await fetch('/logs?limit=200', { headers: { 'Authorization': auth() } });
+                        if (r.status === 401) return;
+                        const d = await r.json();
+                        if (d.lines) els.logBox.textContent = d.lines.join('\n');
+                    } catch { }
+                }, 3000);
+            }
+
+            // Settings Modal Functions
+            function showSettingsStatus(msg, type) {
+                els.settingsStatus.textContent = msg;
+                els.settingsStatus.className = 'text-center text-sm py-2 rounded-lg ' +
+                    (type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                        type === 'error' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                            'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30');
+                els.settingsStatus.classList.remove('hidden');
+                if (type !== 'loading') {
+                    setTimeout(() => els.settingsStatus.classList.add('hidden'), 3000);
+                }
+            }
+
+            async function openSettings() {
+                // Load current config
+                showSettingsStatus('加载配置中...', 'loading');
+                try {
+                    const res = await fetch('/config', { headers: { 'Authorization': auth() } });
+                    if (res.status === 401) {
+                        showSettingsStatus('权限验证失败', 'error');
+                        return;
+                    }
+                    const data = await res.json();
+                    if (data.ok && data.config) {
+                        const cfg = data.config;
+                        els.cfgPort.value = cfg.port || '';
+                        els.cfgDataDir.value = cfg.dataDir || '';
+                        els.cfgBackupDir.value = cfg.backupDir || '';
+                        els.cfgUser.value = cfg.user || '';
+                        els.cfgPass.value = ''; // 密码不回显
+                        els.cfgR2AccountId.value = cfg.r2AccountId || '';
+                        els.cfgR2Bucket.value = cfg.r2Bucket || '';
+                        els.cfgR2AccessKeyId.value = cfg.r2AccessKeyId || '';
+                        els.cfgR2SecretAccessKey.value = ''; // 密码不回显
+                        els.cfgR2Prefix.value = cfg.r2Prefix || '';
+                        els.settingsStatus.classList.add('hidden');
+                    } else {
+                        showSettingsStatus(data.error || '加载失败', 'error');
+                    }
+                } catch (e) {
+                    showSettingsStatus('网络错误', 'error');
+                }
+
+                // Show modal
+                els.settingsModal.classList.remove('hidden');
+                setTimeout(() => {
+                    els.settingsModal.classList.remove('opacity-0');
+                    els.settingsBox.classList.remove('scale-95');
+                    els.settingsBox.classList.add('scale-100');
+                }, 10);
+            }
+
+            function closeSettings() {
+                els.settingsModal.classList.add('opacity-0');
+                els.settingsBox.classList.add('scale-95');
+                els.settingsBox.classList.remove('scale-100');
+                setTimeout(() => els.settingsModal.classList.add('hidden'), 300);
+            }
+
+            async function saveSettings() {
+                showSettingsStatus('保存中...', 'loading');
+                try {
+                    const newCfg = {
+                        port: parseInt(els.cfgPort.value, 10) || undefined,
+                        dataDir: els.cfgDataDir.value || undefined,
+                        backupDir: els.cfgBackupDir.value || undefined,
+                        user: els.cfgUser.value || undefined,
+                        pass: els.cfgPass.value || undefined, // 空字符串不会更新密码
+                        r2AccountId: els.cfgR2AccountId.value.trim(),
+                        r2Bucket: els.cfgR2Bucket.value.trim(),
+                        r2AccessKeyId: els.cfgR2AccessKeyId.value.trim(),
+                        r2SecretAccessKey: els.cfgR2SecretAccessKey.value || undefined,
+                        r2Prefix: els.cfgR2Prefix.value.trim()
+                    };
+
+                    const res = await fetch('/config', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': auth(),
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(newCfg)
+                    });
+
+                    if (res.status === 401) {
+                        showSettingsStatus('权限验证失败', 'error');
+                        return;
+                    }
+
+                    const data = await res.json();
+                    if (data.ok) {
+                        showSettingsStatus('配置已保存，需重启生效', 'success');
+                    } else {
+                        showSettingsStatus(data.error || '保存失败', 'error');
+                    }
+                } catch (e) {
+                    showSettingsStatus('网络错误', 'error');
+                }
+            }
+
+            async function restartService() {
+                if (!confirm('确定要重启服务吗？\n\n服务将立即重启，页面可能会短暂无响应。')) return;
+
+                showSettingsStatus('正在重启...', 'loading');
+                setStatus('服务重启中...', 'loading');
+
+                try {
+                    const res = await fetch('/restart', {
+                        method: 'POST',
+                        headers: { 'Authorization': auth() }
+                    });
+
+                    if (res.ok) {
+                        showSettingsStatus('重启指令已发送，等待恢复...', 'success');
+                        closeSettings();
+
+                        // 延迟后尝试重新连接
+                        setTimeout(async () => {
+                            setStatus('正在重新连接...', 'loading');
+                            let retries = 10;
+                            const tryConnect = async () => {
+                                try {
+                                    const r = await api('GET', '/health');
+                                    if (r.ok) {
+                                        setStatus('服务已恢复', 'success');
+                                        refresh();
+                                        return;
+                                    }
+                                } catch { }
+                                if (--retries > 0) setTimeout(tryConnect, 2000);
+                                else setStatus('重连失败，请刷新页面', 'error');
+                            };
+                            tryConnect();
+                        }, 3000);
+                    } else {
+                        showSettingsStatus('重启失败', 'error');
+                    }
+                } catch (e) {
+                    showSettingsStatus('网络错误', 'error');
+                }
+            }
+
+            // Listeners
+            els.connectBtn.onclick = connect;
+            $('#confirm-cancel').onclick = closeConfirm;
+            $('#backup').onclick = async () => {
+                setStatus('正在创建快照...', 'loading');
+                const r = await api('POST', '/backup');
+                if (r.ok) {
+                    setStatus(r.warning ? `备份已创建，但 R2 上传失败` : '备份创建成功', r.warning ? 'error' : 'success');
+                    refresh();
+                }
+                else setStatus('备份失败', 'error');
+            };
+            $('#refresh').onclick = refresh;
+            $('#health').onclick = () => { setStatus('检测中...', 'loading'); api('GET', '/health').then(r => setStatus(r.ok ? '系统在线' : '离线', r.ok ? 'success' : 'error')); };
+            $('#log-toggle').onclick = function () { logAuto = !logAuto; this.textContent = logAuto ? '实时' : '暂停'; this.className = logAuto ? 'text-[10px] text-cyan-500/80 font-mono transition' : 'text-[10px] text-slate-500 font-mono transition'; };
+            $('#log-clear').onclick = () => { api('DELETE', '/logs'); els.logBox.textContent = ''; };
+
+            // Settings Listeners
+            $('#settings-btn').onclick = openSettings;
+            $('#settings-close').onclick = closeSettings;
+            $('#settings-save').onclick = saveSettings;
+            $('#settings-restart').onclick = restartService;
+
+            loadCfg();
+        })();
+    </script>
+</body>
+
+</html>
