@@ -878,12 +878,139 @@ class TavernWebViewHost(
                       }
                     };
 
+                    var initialScrollDelays = [120, 420, 900, 1600];
+
+                    function normalizeKeyPart(value) {
+                      if (value === undefined || value === null || value === '') return '';
+                      return String(value);
+                    }
+
+                    function getActiveChatKey(context) {
+                      try {
+                        context = context || getContext();
+                        var chatId = normalizeKeyPart((context && context.chatId) || (context && context.getCurrentChatId && context.getCurrentChatId()));
+                        var groupId = normalizeKeyPart(context && context.groupId);
+                        var characterId = normalizeKeyPart(context && context.characterId);
+
+                        if (!chatId) return '';
+                        if (groupId) return 'group:' + groupId + ':' + chatId;
+                        if (characterId) return 'character:' + characterId + ':' + chatId;
+                        return '';
+                      } catch (error) {
+                        return '';
+                      }
+                    }
+
+                    function clearInitialScrollTimers() {
+                      var timers = window.__stNativeInitialScrollTimers || [];
+                      for (var i = 0; i < timers.length; i += 1) {
+                        clearTimeout(timers[i]);
+                      }
+                      window.__stNativeInitialScrollTimers = [];
+                    }
+
+                    function cancelInitialChatScroll() {
+                      var timers = window.__stNativeInitialScrollTimers || [];
+                      if (!timers.length) return;
+                      window.__stNativeInitialScrollCancelled = true;
+                      clearInitialScrollTimers();
+                    }
+
+                    function runInitialChatScrollAttempt(chatKey) {
+                      try {
+                        if (window.__stNativeInitialScrollCancelled || window.__stNativeInitialScrollChatKey !== chatKey) return;
+                        var scroll = function () {
+                          if (window.__stNativeInitialScrollCancelled || window.__stNativeInitialScrollChatKey !== chatKey) return;
+                          window.__stNativeScrollChatToLatest();
+                        };
+
+                        if (typeof requestAnimationFrame === 'function') {
+                          requestAnimationFrame(scroll);
+                        } else {
+                          setTimeout(scroll, 0);
+                        }
+                      } catch (error) {
+                        console.warn('[STNative] fallback initial scroll failed', error);
+                      }
+                    }
+
+                    function scheduleInitialChatScroll(context, reason) {
+                      try {
+                        var chatKey = getActiveChatKey(context);
+                        if (!chatKey) {
+                          window.__stNativeInitialScrollChatKey = '';
+                          window.__stNativeInitialScrollCancelled = true;
+                          clearInitialScrollTimers();
+                          return;
+                        }
+
+                        if (window.__stNativeInitialScrollChatKey === chatKey) return;
+
+                        window.__stNativeInitialScrollChatKey = chatKey;
+                        window.__stNativeInitialScrollCancelled = false;
+                        window.__stNativeInitialScrollReason = reason || 'unknown';
+                        clearInitialScrollTimers();
+
+                        initialScrollDelays.forEach(function (delay) {
+                          var timer = setTimeout(function () {
+                            window.__stNativeInitialScrollTimers = (window.__stNativeInitialScrollTimers || []).filter(function (item) {
+                              return item !== timer;
+                            });
+                            runInitialChatScrollAttempt(chatKey);
+                          }, delay);
+                          window.__stNativeInitialScrollTimers = window.__stNativeInitialScrollTimers || [];
+                          window.__stNativeInitialScrollTimers.push(timer);
+                        });
+                      } catch (error) {
+                        console.warn('[STNative] fallback schedule initial scroll failed', error);
+                      }
+                    }
+
+                    function installInitialScrollCancelHooks() {
+                      if (window.__stNativeInitialScrollCancelHooksInstalled) return;
+                      window.__stNativeInitialScrollCancelHooksInstalled = true;
+
+                      document.addEventListener('touchstart', cancelInitialChatScroll, { capture: true, passive: true });
+                      document.addEventListener('pointerdown', cancelInitialChatScroll, { capture: true, passive: true });
+                      document.addEventListener('wheel', cancelInitialChatScroll, { capture: true, passive: true });
+                      document.addEventListener('keydown', cancelInitialChatScroll, true);
+                      document.addEventListener('click', cancelInitialChatScroll, true);
+                    }
+
+                    function getLatestContext(fallbackContext) {
+                      try {
+                        return getContext() || fallbackContext;
+                      } catch (error) {
+                        return fallbackContext;
+                      }
+                    }
+
+                    function installChatScrollHooks(context, types) {
+                      if (window.__stNativeChatScrollHooksInstalled) return;
+                      window.__stNativeChatScrollHooksInstalled = true;
+                      installInitialScrollCancelHooks();
+                      scheduleInitialChatScroll(context, 'attach');
+
+                      if (types.CHAT_CHANGED) {
+                        context.eventSource.on(types.CHAT_CHANGED, function () {
+                          scheduleInitialChatScroll(getLatestContext(context), 'chat_changed');
+                        });
+                      }
+
+                      if (types.CHAT_LOADED) {
+                        context.eventSource.on(types.CHAT_LOADED, function () {
+                          scheduleInitialChatScroll(getLatestContext(context), 'chat_loaded');
+                        });
+                      }
+                    }
+
                     function attachHooks() {
                       try {
                         installPendingHooks();
                         var context = getContext();
                         var types = getEventTypes(context);
                         if (!context || !context.eventSource || !types) return false;
+                        installChatScrollHooks(context, types);
                         if (window.__stNativeGenerationListenersAttached) return true;
                         window.__stNativeGenerationListenersAttached = true;
 
