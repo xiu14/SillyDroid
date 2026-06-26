@@ -448,10 +448,55 @@ async function pruneLocalBackups(backupDir, keepName = '') {
 
   for (const file of files) {
     if (!file.isFile() || !isBackupFileName(file.name) || file.name === keepName) continue;
-    const filePath = path.join(backupDir, file.name);
-    await fsp.unlink(filePath).catch(() => { });
-    console.log(`[backup] auto-deleted local backup: ${file.name}`);
+    const deleted = await deleteLocalBackup(backupDir, file.name, 'auto-deleted local backup');
+    if (!deleted) {
+      console.error(`[backup] failed to auto-delete local backup: ${file.name}`);
+    }
   }
+}
+
+async function deleteLocalBackup(backupDir, name, reason = 'deleted local backup') {
+  const safeName = path.basename(name);
+  if (!safeName || !isBackupFileName(safeName)) return false;
+
+  const filePath = path.join(backupDir, safeName);
+  try {
+    if (!await fileExists(filePath)) return false;
+    await fsp.unlink(filePath);
+    console.log(`[backup] ${reason}: ${safeName}`);
+    return true;
+  } catch (error) {
+    console.error(`[backup] failed to delete local backup ${safeName}: ${error.message}`);
+    return false;
+  }
+}
+
+async function removeUploadedLocalDuplicates(backupDir, localItems, remoteItems) {
+  if (!remoteItems.length || !localItems.length) return localItems;
+
+  const remoteByName = new Map(remoteItems.map((item) => [item.name, item]));
+  const kept = [];
+  for (const localItem of localItems) {
+    const remoteItem = remoteByName.get(localItem.name);
+    if (!remoteItem) {
+      kept.push(localItem);
+      continue;
+    }
+
+    const remoteTime = new Date(remoteItem.mtime).getTime();
+    const localTime = new Date(localItem.mtime).getTime();
+    if (Number.isFinite(remoteTime) && Number.isFinite(localTime) && remoteTime >= localTime) {
+      const deleted = await deleteLocalBackup(backupDir, localItem.name, 'removed local duplicate after R2 upload');
+      if (!deleted) {
+        kept.push(localItem);
+      }
+      continue;
+    }
+
+    kept.push(localItem);
+  }
+
+  return kept;
 }
 
 function mergeBackupLists(localItems, remoteItems) {
@@ -697,6 +742,10 @@ app.post('/backup', async (req, res) => {
         if (result.attempts > 1) {
           console.log(`[backup] R2 upload finished after ${result.attempts} attempts: ${name}`);
         }
+        const deleted = await deleteLocalBackup(cfg.backupDir, name, 'deleted local backup after R2 upload');
+        if (!deleted) {
+          warning = `R2 upload succeeded, but local cleanup failed for ${name}`;
+        }
         keepLocalName = '';
       } catch (err) {
         warning = err.message;
@@ -743,13 +792,14 @@ app.get('/list', async (req, res) => {
   const cfg = getConfig();
 
   try {
-    const localItems = await listLocalBackups(cfg.backupDir);
+    let localItems = await listLocalBackups(cfg.backupDir);
     let remoteItems = [];
     let warning = '';
 
     if (hasR2Config(cfg)) {
       try {
         remoteItems = await listR2Backups(cfg);
+        localItems = await removeUploadedLocalDuplicates(cfg.backupDir, localItems, remoteItems);
       } catch (err) {
         warning = err.message;
         console.error(`[list] R2 list failed: ${warning}`);
@@ -911,10 +961,12 @@ app.post('/config', async (req, res) => {
       r2Bucket,
       r2AccessKeyId,
       r2SecretAccessKey,
-      r2Prefix
+      r2Prefix,
+      clearR2Config
     } = req.body || {};
 
     const currentCfg = getConfig();
+    const clearR2 = clearR2Config === true || clearR2Config === 'true';
     const newCfg = normalizeEmbeddedConfig({
       ...currentCfg,
       port: typeof port === 'number' ? port : (parseInt(port, 10) || currentCfg.port),
@@ -923,13 +975,13 @@ app.post('/config', async (req, res) => {
       backupDir: backupDir || currentCfg.backupDir,
       user: user !== undefined ? user : currentCfg.user,
       pass: pass !== undefined && pass !== '' ? pass : currentCfg.pass,
-      r2AccountId: r2AccountId !== undefined ? String(r2AccountId).trim() : currentCfg.r2AccountId,
-      r2Bucket: r2Bucket !== undefined ? String(r2Bucket).trim() : currentCfg.r2Bucket,
-      r2AccessKeyId: r2AccessKeyId !== undefined ? String(r2AccessKeyId).trim() : currentCfg.r2AccessKeyId,
-      r2SecretAccessKey: r2SecretAccessKey !== undefined && r2SecretAccessKey !== ''
+      r2AccountId: clearR2 ? '' : (r2AccountId !== undefined ? String(r2AccountId).trim() : currentCfg.r2AccountId),
+      r2Bucket: clearR2 ? '' : (r2Bucket !== undefined ? String(r2Bucket).trim() : currentCfg.r2Bucket),
+      r2AccessKeyId: clearR2 ? '' : (r2AccessKeyId !== undefined ? String(r2AccessKeyId).trim() : currentCfg.r2AccessKeyId),
+      r2SecretAccessKey: clearR2 ? '' : (r2SecretAccessKey !== undefined && r2SecretAccessKey !== ''
         ? String(r2SecretAccessKey).trim()
-        : currentCfg.r2SecretAccessKey,
-      r2Prefix: r2Prefix !== undefined ? normalizeR2Prefix(String(r2Prefix)) : currentCfg.r2Prefix,
+        : currentCfg.r2SecretAccessKey),
+      r2Prefix: clearR2 ? '' : (r2Prefix !== undefined ? normalizeR2Prefix(String(r2Prefix)) : currentCfg.r2Prefix),
       r2Region: 'auto'
     });
 

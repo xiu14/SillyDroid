@@ -92,6 +92,24 @@ class TavernShellSettingsStore(context: Context) : TavernShellSettingsRepository
             preferences.edit().putString(imageProxyExcludedHostsKey, value.trim()).apply()
         }
 
+    override var remoteBackupAutoEnabled: Boolean
+        get() = preferences.getBoolean(remoteBackupAutoEnabledKey, true)
+        set(value) {
+            preferences.edit().putBoolean(remoteBackupAutoEnabledKey, value).apply()
+        }
+
+    override var remoteBackupLastAutoAt: Long
+        get() = preferences.getLong(remoteBackupLastAutoAtKey, 0L)
+        set(value) {
+            preferences.edit().putLong(remoteBackupLastAutoAtKey, value.coerceAtLeast(0L)).apply()
+        }
+
+    override var remoteBackupLastAutoFile: String
+        get() = preferences.getString(remoteBackupLastAutoFileKey, "").orEmpty()
+        set(value) {
+            preferences.edit().putString(remoteBackupLastAutoFileKey, value.trim()).apply()
+        }
+
     override fun bridgeStatus(): TavernShellBridgeStatus {
         return TavernShellBridgeStatus(
             mode = preferences.getString(bridgeModeKey, TavernShellBridgeStatus.MODE_UNKNOWN).orEmpty(),
@@ -188,6 +206,9 @@ class TavernShellSettingsStore(context: Context) : TavernShellSettingsRepository
         private const val imageProxyEnabledKey = "image-proxy-enabled"
         private const val imageProxyUrlKey = "image-proxy-url"
         private const val imageProxyExcludedHostsKey = "image-proxy-excluded-hosts"
+        private const val remoteBackupAutoEnabledKey = "remote-backup-auto-enabled"
+        private const val remoteBackupLastAutoAtKey = "remote-backup-last-auto-at"
+        private const val remoteBackupLastAutoFileKey = "remote-backup-last-auto-file"
         private const val bridgeModeKey = "bridge-mode"
         private const val bridgeVersionKey = "bridge-version"
         private const val bridgeLastEventKey = "bridge-last-event"

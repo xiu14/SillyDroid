@@ -41,6 +41,7 @@ class BootstrapSettingsScreenController(
     private val toolbarAboutEntryView: TextView,
     private val dataPanelView: android.view.View,
     private val tavernShellPanelView: android.view.View,
+    private val backupPanelView: android.view.View,
     private val extensionsPanelView: android.view.View,
     private val logsPanelView: android.view.View,
     private val logsScrollView: NestedScrollView,
@@ -325,6 +326,7 @@ class BootstrapSettingsScreenController(
         if (tabLayout.tabCount == 0) {
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_data))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_tavern_shell))
+            tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_backup))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_settings))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_extensions))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_terminal))
@@ -375,6 +377,7 @@ class BootstrapSettingsScreenController(
         scrollView.isVisible = !isExtensionsTab && !isLogsTab && !isTerminalTab
         dataPanelView.isVisible = tab == SettingsTab.DATA
         tavernShellPanelView.isVisible = tab == SettingsTab.TAVERN_SHELL
+        backupPanelView.isVisible = tab == SettingsTab.BACKUP
         extensionsPanelView.isVisible = isExtensionsTab
         logsPanelView.isVisible = isLogsTab
         terminalPanelView.isVisible = isTerminalTab
@@ -539,6 +542,11 @@ class BootstrapSettingsScreenController(
                 dimen(R.dimen.sillydroid_tab_horizontal_padding)
             }
 
+            tabLayout.tabMode = if (tabLayout.tabCount >= 7) {
+                TabLayout.MODE_SCROLLABLE
+            } else {
+                TabLayout.MODE_FIXED
+            }
             tabLayout.minimumHeight = 0
             tabLayout.setPadding(0, 0, 0, 0)
             tabLayout.layoutParams = tabLayout.layoutParams.apply {

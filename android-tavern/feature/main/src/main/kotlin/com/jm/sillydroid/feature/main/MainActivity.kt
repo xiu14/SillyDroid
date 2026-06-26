@@ -28,6 +28,7 @@ import com.jm.sillydroid.core.ui.window.SystemBarAppearanceController
 import com.jm.sillydroid.domain.app.SillyDroidAppGraph
 import com.jm.sillydroid.domain.app.SillyDroidAppGraphProvider
 import com.jm.sillydroid.domain.bootstrap.BootstrapController
+import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
 import com.jm.sillydroid.feature.main.diagnostics.formatTrimMemoryLevel
 import com.jm.sillydroid.feature.main.status.CompositeStatusPresenter
 import com.jm.sillydroid.feature.main.status.ForegroundPillStatusPresenter
@@ -93,6 +94,8 @@ class MainActivity : AppCompatActivity() {
     private var lastWebViewSystemBarsColorHex: String? = null
     private var lastWebViewStatusBarColorHex: String? = null
     private var lastWebViewNavigationBarColorHex: String? = null
+    private var remoteBackupAutoInFlight = false
+    private var lastRemoteBackupAutoAttemptAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -182,7 +185,7 @@ class MainActivity : AppCompatActivity() {
             appGraph = appGraph,
             browserHost = browserHost,
             floatingLogsHost = floatingLogsHost,
-            onMaybePromptDefaultExtensionsAfterBootstrapReady = ::maybePromptDefaultExtensionsAfterBootstrapReady,
+            onMaybePromptDefaultExtensionsAfterBootstrapReady = ::onBootstrapReadyMonitoring,
             recreateMainActivityForBrowserEngineChange = {
                 recordDefaultHostDiagnostic(
                     category = "browser",
@@ -1031,6 +1034,11 @@ class MainActivity : AppCompatActivity() {
         hostLogRepository.recordWebViewJsError(line)
     }
 
+    private fun onBootstrapReadyMonitoring() {
+        maybePromptDefaultExtensionsAfterBootstrapReady()
+        maybeRunDailyRemoteBackup()
+    }
+
     private fun maybePromptDefaultExtensionsAfterBootstrapReady() {
         if (hostConfigStore.defaultExtensionsPromptConsumed) {
             return
@@ -1054,7 +1062,59 @@ class MainActivity : AppCompatActivity() {
         ).launch()
     }
 
+    private fun maybeRunDailyRemoteBackup() {
+        val shellSettings = appGraph.tavernShellSettingsRepository
+        if (!shellSettings.remoteBackupAutoEnabled) {
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val lastSuccessfulBackupAt = shellSettings.remoteBackupLastAutoAt
+        if (lastSuccessfulBackupAt > 0L &&
+            now - lastSuccessfulBackupAt < TavernShellSettingsRepository.REMOTE_BACKUP_AUTO_INTERVAL_MS
+        ) {
+            return
+        }
+        if (remoteBackupAutoInFlight ||
+            now - lastRemoteBackupAutoAttemptAt < remoteBackupAutoRetryThrottleMs
+        ) {
+            return
+        }
+
+        remoteBackupAutoInFlight = true
+        lastRemoteBackupAutoAttemptAt = now
+        lifecycleScope.launch {
+            val result = withContext(appGraph.dispatchers.io) {
+                runCatching {
+                    appGraph.remoteBackupRepository.createBackup()
+                }
+            }
+            remoteBackupAutoInFlight = false
+            result.onSuccess { backup ->
+                shellSettings.remoteBackupLastAutoAt = System.currentTimeMillis()
+                shellSettings.remoteBackupLastAutoFile = backup.fileName
+                recordDefaultHostDiagnostic(
+                    category = "remote_backup",
+                    body = buildString {
+                        append("event=auto_backup_success file=")
+                        append(backup.fileName.ifBlank { "-" })
+                        if (backup.warning.isNotBlank()) {
+                            append(" warning=")
+                            append(backup.warning.replace('\n', ' ').take(240))
+                        }
+                    }
+                )
+            }.onFailure { error ->
+                recordDefaultHostDiagnostic(
+                    category = "remote_backup",
+                    body = "event=auto_backup_failed reason=${error.message?.replace('\n', ' ')?.take(240).orEmpty()}"
+                )
+            }
+        }
+    }
+
     private companion object {
         private const val TAVERN_NATIVE_BRIDGE_ID = "third-party/tavern-native-bridge"
+        private const val remoteBackupAutoRetryThrottleMs = 5L * 60L * 1000L
     }
 }

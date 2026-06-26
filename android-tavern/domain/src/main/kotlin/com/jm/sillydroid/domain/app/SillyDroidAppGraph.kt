@@ -5,6 +5,7 @@ import android.content.Intent
 import com.jm.sillydroid.core.common.DispatcherProvider
 import com.jm.sillydroid.domain.bootstrap.ConsoleRuntimeRepository
 import com.jm.sillydroid.core.model.update.AppUpdateBuildConfig
+import com.jm.sillydroid.domain.backup.RemoteBackupRepository
 import com.jm.sillydroid.domain.bootstrap.BootstrapController
 import com.jm.sillydroid.domain.bootstrap.RuntimeMetadataRepository
 import com.jm.sillydroid.domain.bootstrap.RuntimeConfigRepository
@@ -35,6 +36,7 @@ interface SillyDroidAppGraph {
     val appUpdateRepository: AppUpdateRepository
     val appUpdateBuildConfig: AppUpdateBuildConfig
     val tavernShellSettingsRepository: TavernShellSettingsRepository
+    val remoteBackupRepository: RemoteBackupRepository
 
     fun tavernConfigRepository(): SettingsConfigRepository
     fun tavernDataArchiveManager(): DataArchiveRepository

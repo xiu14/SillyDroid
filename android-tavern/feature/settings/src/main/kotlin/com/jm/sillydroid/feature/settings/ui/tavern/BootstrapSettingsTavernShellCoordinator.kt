@@ -1,7 +1,6 @@
 package com.jm.sillydroid.feature.settings.ui.tavern
 
 import android.content.Intent
-import android.net.Uri
 import android.text.InputType
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -157,9 +156,6 @@ class BootstrapSettingsTavernShellCoordinator(
         ).editText
         addButton(R.string.bootstrap_settings_tavern_shell_clear_auth) {
             clearCurrentHostCredentials()
-        }
-        addButton(R.string.bootstrap_settings_tavern_shell_open_backup) {
-            openUrl("http://127.0.0.1:8787/")
         }
         addButton(R.string.bootstrap_settings_tavern_shell_save) {
             saveState()
@@ -398,12 +394,6 @@ class BootstrapSettingsTavernShellCoordinator(
                     "com.jm.sillydroid.feature.main.status.GenerationLiveUpdateService"
                 ).setAction("com.jm.sillydroid.action.STOP_KEEP_ALIVE")
             )
-        }
-    }
-
-    private fun openUrl(url: String) {
-        runCatching {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
 

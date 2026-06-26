@@ -31,6 +31,9 @@ interface TavernShellSettingsRepository {
     var imageProxyEnabled: Boolean
     var imageProxyUrl: String
     var imageProxyExcludedHosts: String
+    var remoteBackupAutoEnabled: Boolean
+    var remoteBackupLastAutoAt: Long
+    var remoteBackupLastAutoFile: String
 
     val pendingKeepAliveMs: Long
         get() = pendingKeepAliveMinutes * 60L * 1000L
@@ -48,5 +51,6 @@ interface TavernShellSettingsRepository {
         const val DEFAULT_PENDING_KEEP_ALIVE_MINUTES = 10L
         const val MIN_PENDING_KEEP_ALIVE_MINUTES = 1L
         const val MAX_PENDING_KEEP_ALIVE_MINUTES = 60L
+        const val REMOTE_BACKUP_AUTO_INTERVAL_MS = 24L * 60L * 60L * 1000L
     }
 }

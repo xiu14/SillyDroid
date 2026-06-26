@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SillyDroid</string>
+    <string name="app_name">STDROID</string>
     <string name="host_notification_channel_foreground_title">SillyDroid 前台运行</string>
     <string name="host_notification_channel_foreground_description">用于展示启动中的本地服务和已启动后的常驻状态。</string>
     <string name="host_notification_channel_message_title">SillyDroid 消息提醒</string>

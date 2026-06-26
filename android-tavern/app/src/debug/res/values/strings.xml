@@ -4,5 +4,5 @@
         debug 包已经拆成独立 applicationId，可与 release 同装；
         这里再单独覆盖启动器名称，避免两套宿主在桌面上同名难分辨。
     -->
-    <string name="app_name">SillyDroid Debug</string>
+    <string name="app_name">STDROID</string>
 </resources>
