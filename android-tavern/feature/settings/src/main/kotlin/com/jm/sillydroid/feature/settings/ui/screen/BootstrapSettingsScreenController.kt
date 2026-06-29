@@ -42,6 +42,7 @@ class BootstrapSettingsScreenController(
     private val dataPanelView: android.view.View,
     private val tavernShellPanelView: android.view.View,
     private val backupPanelView: android.view.View,
+    private val storagePanelView: android.view.View,
     private val extensionsPanelView: android.view.View,
     private val logsPanelView: android.view.View,
     private val logsScrollView: NestedScrollView,
@@ -74,7 +75,7 @@ class BootstrapSettingsScreenController(
     private val busyLockedControls: List<View> = emptyList(),
     private val onTabChanged: (SettingsTab) -> Unit = {}
 ) {
-    private var selectedTab = SettingsTab.DATA
+    private var selectedTab = SettingsTab.TAVERN_SHELL
     private var bannerIsError = false
     private var busy = false
     private var hasUnsavedChanges = false
@@ -324,11 +325,12 @@ class BootstrapSettingsScreenController(
 
     private fun setupTabs() {
         if (tabLayout.tabCount == 0) {
-            tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_data))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_tavern_shell))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_backup))
+            tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_storage))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_settings))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_extensions))
+            tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_data))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_terminal))
             tabLayout.addTab(tabLayout.newTab().setText(R.string.bootstrap_settings_tab_logs))
         }
@@ -378,6 +380,7 @@ class BootstrapSettingsScreenController(
         dataPanelView.isVisible = tab == SettingsTab.DATA
         tavernShellPanelView.isVisible = tab == SettingsTab.TAVERN_SHELL
         backupPanelView.isVisible = tab == SettingsTab.BACKUP
+        storagePanelView.isVisible = tab == SettingsTab.STORAGE
         extensionsPanelView.isVisible = isExtensionsTab
         logsPanelView.isVisible = isLogsTab
         terminalPanelView.isVisible = isTerminalTab

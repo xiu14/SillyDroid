@@ -6,7 +6,7 @@ import com.jm.sillydroid.domain.bootstrap.RuntimePatchMetadataSnapshot
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchSettingOverrides
 
 data class SettingsActivityUiState(
-    val selectedTab: SettingsTab = SettingsTab.DATA,
+    val selectedTab: SettingsTab = SettingsTab.TAVERN_SHELL,
     val hostDisplayMode: HostDisplayMode = HostDisplayMode.NORMAL,
     val browserEngine: BrowserEngine = BrowserEngine.SYSTEM_WEBVIEW,
     val nodeMaxOldSpaceMb: Int = 0,

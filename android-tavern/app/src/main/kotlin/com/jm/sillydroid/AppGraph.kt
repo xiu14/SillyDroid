@@ -22,6 +22,7 @@ import com.jm.sillydroid.data.runtime.HostExtensionDirectoriesProvider
 import com.jm.sillydroid.data.runtime.HostExtensionCommandRunner
 import com.jm.sillydroid.data.settings.BootstrapHostConfigStore
 import com.jm.sillydroid.data.settings.RemoteBackupRepositoryImpl
+import com.jm.sillydroid.data.settings.StorageUsageRepositoryImpl
 import com.jm.sillydroid.data.settings.TavernConfigRepository
 import com.jm.sillydroid.data.settings.TavernDataArchiveManager
 import com.jm.sillydroid.data.settings.TavernShellSettingsStore
@@ -43,6 +44,7 @@ import com.jm.sillydroid.domain.settings.DataArchiveRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 import com.jm.sillydroid.domain.settings.SettingsConfigRepository
 import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
+import com.jm.sillydroid.domain.storage.StorageUsageRepository
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 import com.jm.sillydroid.domain.update.AppUpdateStateRepository
 
@@ -137,6 +139,10 @@ class AppGraph(private val application: Application) : SillyDroidAppGraph {
 
     override val remoteBackupRepository: RemoteBackupRepository by lazy {
         RemoteBackupRepositoryImpl()
+    }
+
+    override val storageUsageRepository: StorageUsageRepository by lazy {
+        StorageUsageRepositoryImpl(application)
     }
 
     private val extensionsLocalDataSource: ExtensionsLocalDataSource by lazy {

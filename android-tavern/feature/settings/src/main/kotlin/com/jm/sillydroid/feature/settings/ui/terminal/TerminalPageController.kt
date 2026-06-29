@@ -73,7 +73,7 @@ class TerminalPageController(
         )
     }
 
-    private var selectedTab: SettingsTab = SettingsTab.DATA
+    private var selectedTab: SettingsTab = SettingsTab.TAVERN_SHELL
     private var imeVisible = false
     private var selectionModeActive = false
     private var extraKeysState = TerminalExtraKeysState()

@@ -19,6 +19,7 @@ import com.jm.sillydroid.domain.settings.DataArchiveRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 import com.jm.sillydroid.domain.settings.SettingsConfigRepository
 import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
+import com.jm.sillydroid.domain.storage.StorageUsageRepository
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 
 interface SillyDroidAppGraph {
@@ -37,6 +38,7 @@ interface SillyDroidAppGraph {
     val appUpdateBuildConfig: AppUpdateBuildConfig
     val tavernShellSettingsRepository: TavernShellSettingsRepository
     val remoteBackupRepository: RemoteBackupRepository
+    val storageUsageRepository: StorageUsageRepository
 
     fun tavernConfigRepository(): SettingsConfigRepository
     fun tavernDataArchiveManager(): DataArchiveRepository

@@ -49,6 +49,7 @@ import com.jm.sillydroid.feature.settings.ui.screen.RuntimePatchBottomSheetContr
 import com.jm.sillydroid.feature.settings.ui.screen.SettingsActivityStateController
 import com.jm.sillydroid.feature.settings.ui.settings.BootstrapSettingsSettingsCoordinator
 import com.jm.sillydroid.feature.settings.ui.settings.BootstrapSettingsQuickActionsController
+import com.jm.sillydroid.feature.settings.ui.storage.BootstrapSettingsStorageCoordinator
 import com.jm.sillydroid.feature.settings.ui.tavern.BootstrapSettingsTavernShellCoordinator
 import com.jm.sillydroid.feature.settings.ui.terminal.HostConsoleSessionStoreRegistry
 import com.jm.sillydroid.feature.settings.ui.terminal.TerminalExtraKeysStripView
@@ -129,6 +130,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
     private lateinit var tavernShellContainer: LinearLayout
     private lateinit var backupPanelView: View
     private lateinit var backupContainer: LinearLayout
+    private lateinit var storagePanelView: View
+    private lateinit var storageContainer: LinearLayout
     private lateinit var quickFieldContainer: LinearLayout
     private lateinit var floatingLogsSwitch: MaterialSwitch
     private lateinit var backgroundOnlyModeSwitch: MaterialSwitch
@@ -224,6 +227,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
     private lateinit var dataCoordinator: BootstrapSettingsDataCoordinator
     private lateinit var tavernShellCoordinator: BootstrapSettingsTavernShellCoordinator
     private lateinit var backupCoordinator: BootstrapSettingsBackupCoordinator
+    private lateinit var storageCoordinator: BootstrapSettingsStorageCoordinator
     private lateinit var extensionsCoordinator: BootstrapSettingsExtensionsCoordinator
     private lateinit var logsCoordinator: BootstrapSettingsLogsCoordinator
     private lateinit var terminalPageController: TerminalPageController
@@ -267,6 +271,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         screenController.initialize()
         tavernShellCoordinator.initialize()
         backupCoordinator.initialize()
+        storageCoordinator.initialize()
         extensionsCoordinator.initialize()
         logsCoordinator.initialize()
         terminalPageController.initialize()
@@ -379,6 +384,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         tavernShellContainer = findViewById(R.id.bootstrapSettingsTavernShellContainer)
         backupPanelView = findViewById(R.id.bootstrapSettingsBackupPanel)
         backupContainer = findViewById(R.id.bootstrapSettingsBackupContainer)
+        storagePanelView = findViewById(R.id.bootstrapSettingsStoragePanel)
+        storageContainer = findViewById(R.id.bootstrapSettingsStorageContainer)
         quickFieldContainer = findViewById(R.id.bootstrapSettingsQuickFieldContainer)
         floatingLogsSwitch = findViewById(R.id.bootstrapSettingsFloatingLogsSwitch)
         backgroundOnlyModeSwitch = findViewById(R.id.bootstrapSettingsBackgroundOnlyModeSwitch)
@@ -458,6 +465,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
             dataPanelView = dataPanelView,
             tavernShellPanelView = tavernShellPanelView,
             backupPanelView = backupPanelView,
+            storagePanelView = storagePanelView,
             extensionsPanelView = extensionsPanelView,
             logsPanelView = logsPanelView,
             logsScrollView = logsScrollView,
@@ -517,6 +525,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
                     tavernShellCoordinator.refreshBridgeStatus()
                 } else if (this::backupCoordinator.isInitialized && tab == SettingsTab.BACKUP) {
                     backupCoordinator.refresh()
+                } else if (this::storageCoordinator.isInitialized && tab == SettingsTab.STORAGE) {
+                    storageCoordinator.refresh()
                 }
                 if (this::terminalPageController.isInitialized) {
                     terminalPageController.onTabChanged(tab)
@@ -625,6 +635,27 @@ class BootstrapSettingsActivity : AppCompatActivity() {
                     shouldForceFreshWebViewLoad = true
                 )
                 finish()
+            }
+        )
+        storageCoordinator = BootstrapSettingsStorageCoordinator(
+            activity = this,
+            dispatchers = appGraph.dispatchers,
+            container = storageContainer,
+            storageRepository = appGraph.storageUsageRepository,
+            hostLogRepository = hostLogRepository,
+            remoteBackupRepository = appGraph.remoteBackupRepository,
+            setBusy = screenController::setBusy,
+            showError = settingsCoordinator::showValidationMessage,
+            showMessage = screenController::showMessage,
+            onClearBrowserDataRequested = {
+                screenController.confirmClearBrowserData { browserDataClearMask ->
+                    updateResultFlags(
+                        shouldForceFreshWebViewLoad = true,
+                        browserDataClearMask = browserDataClearMask
+                    )
+                    screenController.showMessage(getString(R.string.bootstrap_settings_clear_browser_data_success))
+                    finish()
+                }
             }
         )
         dataCoordinator = BootstrapSettingsDataCoordinator(

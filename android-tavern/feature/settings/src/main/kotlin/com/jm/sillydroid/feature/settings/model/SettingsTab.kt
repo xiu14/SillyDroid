@@ -6,18 +6,19 @@ package com.jm.sillydroid.feature.settings.model
  * “关于”已经改成标题右侧入口，所以它保留页面语义，但不再占用 tab strip 的位置。
  */
 enum class SettingsTab(val tabPosition: Int?) {
-    DATA(0),
-    TAVERN_SHELL(1),
-    BACKUP(2),
+    TAVERN_SHELL(0),
+    BACKUP(1),
+    STORAGE(2),
     SETTINGS(3),
     EXTENSIONS(4),
-    TERMINAL(5),
-    LOGS(6),
+    DATA(5),
+    TERMINAL(6),
+    LOGS(7),
     ABOUT(null);
 
     companion object {
         fun fromTabPosition(position: Int): SettingsTab {
-            return entries.firstOrNull { tab -> tab.tabPosition == position } ?: DATA
+            return entries.firstOrNull { tab -> tab.tabPosition == position } ?: TAVERN_SHELL
         }
     }
 }
