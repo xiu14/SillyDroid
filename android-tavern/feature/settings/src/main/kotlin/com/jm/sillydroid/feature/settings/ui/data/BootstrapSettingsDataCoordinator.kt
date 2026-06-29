@@ -42,13 +42,22 @@ class BootstrapSettingsDataCoordinator(
     fun restoreDefaults() {
         activity.lifecycleScope.launch {
             setBusy(true)
-            val loadedConfig = withContext(dispatchers.io) {
-                configRepository.loadDefaultConfig()
+            val result = withContext(dispatchers.io) {
+                runCatching {
+                    // bootstrap 尚未初始化时仓库会抛出 SettingsDataException；
+                    // 设置页点击“恢复默认”必须退化成界面提示，不能直接让宿主崩溃。
+                    configRepository.loadDefaultConfig()
+                }
             }
-            applyDraft(loadedConfig)
-            showBanner(activity.getString(R.string.bootstrap_settings_restore_defaults_success))
-            updateDirtyState()
             setBusy(false)
+
+            result.onSuccess { loadedConfig ->
+                applyDraft(loadedConfig)
+                showBanner(activity.getString(R.string.bootstrap_settings_restore_defaults_success))
+                updateDirtyState()
+            }.onFailure { exception ->
+                showDataError(exception.message ?: activity.getString(R.string.bootstrap_settings_restore_defaults_failed))
+            }
         }
     }
 

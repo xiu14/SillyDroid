@@ -53,6 +53,7 @@ import com.jm.sillydroid.feature.main.ui.home.webview.TavernWebViewHost
 import com.jm.sillydroid.feature.main.ui.home.webview.UnavailableBrowserHost
 import com.jm.sillydroid.feature.main.ui.home.webview.WebViewRendererGoneInfo
 import com.jm.sillydroid.feature.main.ui.home.webview.WebViewRuntimeCompatibility
+import com.jm.sillydroid.feature.main.ui.home.webview.hardenCompatibilityHintDialogMessage
 import com.jm.sillydroid.feature.main.ui.home.webview.resolveRendererGoneAutoUploadCrashType
 import com.jm.sillydroid.feature.main.ui.home.webview.shouldAutoUploadRendererGoneBundle
 import com.jm.sillydroid.feature.main.ui.home.webview.toDiagnosticText
@@ -363,14 +364,14 @@ class MainActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) {
             return
         }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.webview_renderer_crash_browser_engine_hint_title)
-            .setMessage(R.string.webview_renderer_crash_browser_engine_hint_message)
-            .setNegativeButton(R.string.webview_renderer_crash_browser_engine_hint_later, null)
-            .setPositiveButton(R.string.webview_renderer_crash_browser_engine_hint_open_settings) { _, _ ->
+        showWebViewCompatibilityHintDialog {
+            setTitle(R.string.webview_renderer_crash_browser_engine_hint_title)
+            setMessage(R.string.webview_renderer_crash_browser_engine_hint_message)
+            setNegativeButton(R.string.webview_renderer_crash_browser_engine_hint_later, null)
+            setPositiveButton(R.string.webview_renderer_crash_browser_engine_hint_open_settings) { _, _ ->
                 bootstrapOverlayHost.openBootstrapSettings()
             }
-            .show()
+        }
         recordDefaultHostDiagnostic(
             category = "webview",
             body = "event=renderer_crash_browser_engine_hint_shown"
@@ -392,14 +393,14 @@ class MainActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) {
             return
         }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.webview_document_start_unsupported_hint_title)
-            .setMessage(R.string.webview_document_start_unsupported_hint_message)
-            .setNegativeButton(R.string.webview_document_start_unsupported_hint_later, null)
-            .setPositiveButton(R.string.webview_document_start_unsupported_hint_open_settings) { _, _ ->
+        showWebViewCompatibilityHintDialog {
+            setTitle(R.string.webview_document_start_unsupported_hint_title)
+            setMessage(R.string.webview_document_start_unsupported_hint_message)
+            setNegativeButton(R.string.webview_document_start_unsupported_hint_later, null)
+            setPositiveButton(R.string.webview_document_start_unsupported_hint_open_settings) { _, _ ->
                 bootstrapOverlayHost.openBootstrapSettings()
             }
-            .show()
+        }
         recordDefaultHostDiagnostic(
             category = "webview",
             body = "event=document_start_unsupported_hint_shown"
@@ -930,16 +931,25 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.webview_outdated_dialog_title)
-            .setMessage(
+        showWebViewCompatibilityHintDialog {
+            setTitle(R.string.webview_outdated_dialog_title)
+            setMessage(
                 getString(
                     R.string.webview_outdated_dialog_message,
                     compatibility.chromiumVersion.ifBlank { getString(R.string.webview_unknown_version) }
                 )
             )
-            .setPositiveButton(R.string.webview_outdated_dialog_continue, null)
+            setPositiveButton(R.string.webview_outdated_dialog_continue, null)
+        }
+    }
+
+    private fun showWebViewCompatibilityHintDialog(
+        configure: MaterialAlertDialogBuilder.() -> Unit
+    ) {
+        val dialog = MaterialAlertDialogBuilder(this)
+            .apply(configure)
             .show()
+        hardenCompatibilityHintDialogMessage(dialog)
     }
 
     private fun recordActivityLifecycleDiagnostic(event: String, extra: String = "") {

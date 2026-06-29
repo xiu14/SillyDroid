@@ -517,6 +517,7 @@ Linux/Termux 结构：根目录为 config、data、plugins、public；第三方�
     <string name="bootstrap_settings_load_config_failed">载入配置失败，请确认已完成初始化启动流程后再打开设置。</string>
     <string name="bootstrap_settings_clear_data_failed">清空宿主数据失败。</string>
     <string name="bootstrap_settings_restore_defaults_success">已恢复默认配置草稿，点击“保存并启动”后生效。</string>
+    <string name="bootstrap_settings_restore_defaults_failed">恢复默认配置失败。</string>
     <string name="bootstrap_settings_import_success_user">已按官方用户备份导入，共恢复 %1$d 个文件。来源用户 ID：%2$s；当前宿主恢复槽位：%3$s。现在会自动返回主界面，并重新启动本地 Tavern 服务后加载当前 Tavern UI。</string>
     <string name="bootstrap_settings_import_success_host">已按完整数据包导入，共恢复 %1$d 个文件。已按识别到的目录结构恢复 config、data、plugins 与扩展目录。现在会自动返回主界面，并按导入后的配置重新启动本地 Tavern 服务。</string>
     <string name="bootstrap_settings_import_port_changed_suffix">并检测到启动端口从 %1$d 变为 %2$d。返回或保存后将按新端口启动。</string>

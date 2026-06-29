@@ -56,9 +56,16 @@ class StartupCoordinatorService : Service() {
         // 防止上次进程残留的 BootstrapSessionRuntimeStore.snapshot 被新会话误用。
         BootstrapSessionRuntimeStore.reset()
         val graph = (applicationContext as SillyDroidAppGraphProvider).sillyDroidAppGraph
-        graph.runtimeLogManager.initializeForAppStart()
         hostNotificationService = graph.hostNotificationService
         hostNotificationService.ensureChannels()
+        // startForegroundService 到 Service.onStartCommand 之间存在系统超时窗口；
+        // 先用当前启动快照进入 foreground，再做日志与会话管理器初始化，避免重启/设置返回时被系统判定未及时前台化。
+        runCatching {
+            hostNotificationService.postForeground(this, buildForegroundNotificationSpec(BootstrapSessionRuntimeStore.snapshot.value))
+        }.onFailure { error ->
+            Log.w(LOG_TAG, "Initial foreground notification post failed.", error)
+        }
+        graph.runtimeLogManager.initializeForAppStart()
         sessionManager = BootstrapSessionManager(
             context = applicationContext,
             scope = serviceScope,
