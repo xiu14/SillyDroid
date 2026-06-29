@@ -10,7 +10,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [34])
 class BrowserFileChooserIntentFallbackTest {
     @Test
     fun `get content fallback preserves mime filters and multiple selection`() {
