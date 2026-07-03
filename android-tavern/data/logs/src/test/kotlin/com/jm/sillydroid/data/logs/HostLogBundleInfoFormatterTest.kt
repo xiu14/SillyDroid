@@ -3,6 +3,7 @@ package com.jm.sillydroid.data.logs
 import com.jm.sillydroid.core.model.settings.BrowserEngine
 import com.jm.sillydroid.core.model.settings.FloatingLogBubblePosition
 import com.jm.sillydroid.core.model.settings.HostDisplayMode
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.data.settings.HostConfigSnapshot
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchMetadataSnapshot
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchModuleMetadataSnapshot
@@ -72,6 +73,8 @@ class HostLogBundleInfoFormatterTest {
         assertTrue(bundleInfo.contains("browserEngine=SYSTEM_WEBVIEW"))
         assertTrue(bundleInfo.contains("browserZoomPercent=100"))
         assertTrue(bundleInfo.contains("browserPageZoomPercent=100"))
+        assertTrue(bundleInfo.contains("tavernServerLaunchMode=AUTO"))
+        assertTrue(bundleInfo.contains("tavernServerFastLaunchEnabled=true"))
         assertTrue(bundleInfo.contains("tavernRuntimePatchEnabled=true"))
         assertTrue(bundleInfo.contains("tavernRuntimePatchDisabledModuleIds=character-all-limited-concurrency"))
         assertTrue(bundleInfo.contains("tavernRuntimePatchSettingOverrides=character-all-limited-concurrency.concurrency=4"))
@@ -191,6 +194,8 @@ class HostLogBundleInfoFormatterTest {
         assertTrue(bundleInfoJson.contains("\"browserPageZoomPercent\": 100"))
         assertTrue(bundleInfoJson.contains("\"launchWebViewOnReady\": true"))
         assertTrue(bundleInfoJson.contains("\"backgroundHealthCheckEnabled\": false"))
+        assertTrue(bundleInfoJson.contains("\"tavernServerLaunchMode\": \"AUTO\""))
+        assertTrue(bundleInfoJson.contains("\"tavernServerFastLaunchEnabled\": true"))
         assertTrue(bundleInfoJson.contains("\"tavernRuntimePatchEnabled\": true"))
         assertTrue(bundleInfoJson.contains("\"tavernRuntimePatchDisabledModuleIds\": [\"character-all-limited-concurrency\"]"))
         assertTrue(bundleInfoJson.contains("\"tavernRuntimePatchSettingOverrides\": {\"character-all-limited-concurrency\": {\"concurrency\": \"4\"}}"))
@@ -250,6 +255,8 @@ class HostLogBundleInfoFormatterTest {
             browserPageZoomPercent = 100,
             launchWebViewOnReady = true,
             backgroundHealthCheckEnabled = false,
+            tavernServerLaunchMode = TavernServerLaunchMode.AUTO,
+            tavernServerFastLaunchEnabled = true,
             tavernRuntimePatchEnabled = true,
             tavernRuntimePatchDisabledModuleIds = setOf("character-all-limited-concurrency"),
             tavernRuntimePatchSettingOverrides = mapOf(

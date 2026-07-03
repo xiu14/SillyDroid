@@ -4,6 +4,7 @@ import android.content.Context
 import com.jm.sillydroid.core.model.settings.BrowserEngine
 import com.jm.sillydroid.core.model.settings.FloatingLogBubblePosition
 import com.jm.sillydroid.core.model.settings.HostDisplayMode
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchSettingOverrides
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 
@@ -20,6 +21,8 @@ data class HostConfigSnapshot(
     val browserPageZoomPercent: Int,
     val launchWebViewOnReady: Boolean,
     val backgroundHealthCheckEnabled: Boolean,
+    val tavernServerLaunchMode: TavernServerLaunchMode,
+    val tavernServerFastLaunchEnabled: Boolean,
     val tavernRuntimePatchEnabled: Boolean,
     val tavernRuntimePatchDisabledModuleIds: Set<String>,
     val tavernRuntimePatchSettingOverrides: RuntimePatchSettingOverrides,
@@ -61,6 +64,8 @@ object HostConfigSnapshotExporter {
             browserPageZoomPercent = hostPreferences.browserPageZoomPercent,
             launchWebViewOnReady = hostPreferences.launchWebViewOnReady,
             backgroundHealthCheckEnabled = hostPreferences.backgroundHealthCheckEnabled,
+            tavernServerLaunchMode = hostPreferences.tavernServerLaunchMode,
+            tavernServerFastLaunchEnabled = hostPreferences.tavernServerFastLaunchEnabled,
             tavernRuntimePatchEnabled = hostPreferences.tavernRuntimePatchEnabled,
             tavernRuntimePatchDisabledModuleIds = hostPreferences.tavernRuntimePatchDisabledModuleIds,
             tavernRuntimePatchSettingOverrides = hostPreferences.tavernRuntimePatchSettingOverrides,

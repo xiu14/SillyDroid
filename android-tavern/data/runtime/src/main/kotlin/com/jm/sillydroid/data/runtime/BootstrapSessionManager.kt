@@ -20,6 +20,7 @@ import com.jm.sillydroid.core.model.bootstrap.displayLabel
 import com.jm.sillydroid.core.model.bootstrap.shouldReportCurrentStepElapsedSeconds
 import com.jm.sillydroid.core.model.bootstrap.shouldReportTavernStartupTail
 import com.jm.sillydroid.core.model.bootstrap.withDerivedUiFlags
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.domain.runtime.RuntimeLogManager
 import com.jm.sillydroid.domain.runtime.HostAppForegroundState
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
@@ -74,6 +75,7 @@ class BootstrapSessionManager(
     private var currentStepElapsedRefreshJob: Job? = null
     private var currentStepElapsedAnchorMillis = 0L
     private var tavernServerTailJob: Job? = null
+    private var autoLaunchGitEnableJob: Job? = null
     private var observedTavernServerTailLogFileName: String? = null
     private var serverProcess: ManagedProcess? = null
     private var autoRestartBudget = BootstrapAutoRestartBudget(
@@ -208,6 +210,7 @@ class BootstrapSessionManager(
 
     fun close() {
         bootstrapJob?.cancel()
+        autoLaunchGitEnableJob?.cancel()
         stopRuntimeStatusReporting()
         // Fire-and-forget process teardown to avoid blocking the caller (typically Activity.onDestroy on the main thread).
         scope.launch { runCatching { stopManagedProcesses() } }
@@ -216,6 +219,7 @@ class BootstrapSessionManager(
 
     private suspend fun runBootstrapAttempt(forceRestart: Boolean) {
         stopReadyWatchdog(reason = "starting new bootstrap attempt")
+        autoLaunchGitEnableJob?.cancel()
         stopRuntimeStatusReporting()
         rootfsAssetsRefreshed = false
 
@@ -308,6 +312,7 @@ class BootstrapSessionManager(
                     ),
                     logLine = "lifecycle=${BootstrapLifecycle.READY_MONITORING} message=SillyTavern 已启动。 details=已连接到现有本地 SillyTavern 服务实例。"
                 )
+                maybeEnableGitForAutoLaunchMode(paths, reason = "reused-running-server")
                 startReadyWatchdog(readinessUrl, localUrl)
                 return
             }
@@ -514,6 +519,7 @@ class BootstrapSessionManager(
                 servicePort = servicePort,
                 nodeMaxOldSpaceMb = hostPreferences.nodeMaxOldSpaceMb,
                 nodeMaxSemiSpaceMb = hostPreferences.nodeMaxSemiSpaceMb,
+                tavernServerLaunchMode = hostPreferences.tavernServerLaunchMode,
                 tavernRuntimePatchEnabled = hostPreferences.tavernRuntimePatchEnabled,
                 tavernRuntimePatchDisabledModuleIds = hostPreferences.tavernRuntimePatchDisabledModuleIds,
                 tavernRuntimePatchSettingOverrides = hostPreferences.tavernRuntimePatchSettingOverrides,
@@ -576,6 +582,7 @@ class BootstrapSessionManager(
                 ),
                 logLine = "lifecycle=${BootstrapLifecycle.READY_MONITORING} message=SillyTavern 已启动。 details=本地 HTTP 服务已可访问，已进入运行监控。"
             )
+            maybeEnableGitForAutoLaunchMode(paths, reason = "http-ready")
             startReadyWatchdog(resolvedReadinessUrl, resolvedLocalUrl)
         } catch (_: CancellationException) {
             appendStartupLog("Bootstrap cancelled.")
@@ -920,6 +927,42 @@ class BootstrapSessionManager(
         healthMonitor.startReadyWatchdog(readinessUrl = readinessUrl, localUrl = localUrl)
     }
 
+    private fun maybeEnableGitForAutoLaunchMode(paths: HostPaths, reason: String) {
+        if (hostPreferences.tavernServerLaunchMode != TavernServerLaunchMode.AUTO) {
+            return
+        }
+
+        autoLaunchGitEnableJob?.cancel()
+        autoLaunchGitEnableJob = scope.launch {
+            appendStartupLog("Auto launch mode detected; enabling Git commands after $reason.")
+            val result = runCatching {
+                ServerFastGitInjector(
+                    launcher = LinuxRuntimeLauncher(paths),
+                    paths = paths,
+                    logFileName = "host-command-auto-git.log"
+                ).inject()
+            }.getOrElse { throwable ->
+                appendStartupLog(
+                    "Auto launch mode git injection failed before completion: ${throwable.message ?: throwable.javaClass.simpleName}"
+                )
+                return@launch
+            }
+
+            if (result.succeeded) {
+                appendStartupLog("Auto launch mode git injection completed successfully.")
+                return@launch
+            }
+
+            val details = result.logExcerpt
+                .replace('\n', ' ')
+                .trim()
+                .ifBlank { "<empty>" }
+            appendStartupLog(
+                "Auto launch mode git injection failed with exitCode=${result.exitCode} logTail=$details"
+            )
+        }
+    }
+
     private fun stopReadyWatchdog(reason: String? = null) {
         healthMonitor.stopReadyWatchdog(reason = reason)
     }
@@ -1012,6 +1055,8 @@ class BootstrapSessionManager(
     }
 
     private suspend fun stopManagedProcesses() {
+        autoLaunchGitEnableJob?.cancel()
+        autoLaunchGitEnableJob = null
         healthMonitor.stopAll(reason = "stopping managed Tavern processes")
         serverProcess?.stop()
         serverProcess = null

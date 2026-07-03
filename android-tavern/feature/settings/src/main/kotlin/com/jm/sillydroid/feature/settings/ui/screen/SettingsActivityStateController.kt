@@ -14,6 +14,7 @@ import com.jm.sillydroid.core.model.settings.BrowserEngine
 import com.jm.sillydroid.core.model.settings.HostDisplayMode
 import com.jm.sillydroid.core.model.settings.NodeHeapLimitOptions
 import com.jm.sillydroid.core.model.settings.NodeNewSpaceLimitOptions
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.feature.settings.R
 import com.jm.sillydroid.feature.settings.model.SettingsActivityUiState
 import com.jm.sillydroid.feature.settings.viewmodel.SettingsActivityViewModel
@@ -25,6 +26,8 @@ class SettingsActivityStateController(
     private val floatingLogsSwitch: MaterialSwitch,
     private val backgroundOnlyModeSwitch: MaterialSwitch,
     private val backgroundHealthCheckSwitch: MaterialSwitch,
+    private val launchModeRow: View,
+    private val launchModeValueView: TextView,
     private val tavernRuntimePatchRow: View,
     private val tavernRuntimePatchConfigureButton: MaterialButton,
     private val tavernRuntimePatchSwitch: MaterialSwitch,
@@ -65,6 +68,10 @@ class SettingsActivityStateController(
                     Toast.LENGTH_SHORT
                 ).show()
             }
+        }
+        launchModeValueView.text = resolveLaunchModeLabel(initialState.tavernServerLaunchMode)
+        launchModeRow.setOnClickListener {
+            showLaunchModeDialog(viewModel.uiState.value.tavernServerLaunchMode)
         }
         tavernRuntimePatchRow.setOnClickListener {
             showRuntimePatchBottomSheet(viewModel.uiState.value)
@@ -133,6 +140,10 @@ class SettingsActivityStateController(
         if (backgroundHealthCheckSwitch.isChecked != state.backgroundHealthCheckEnabled) {
             backgroundHealthCheckSwitch.isChecked = state.backgroundHealthCheckEnabled
         }
+        val launchModeLabel = resolveLaunchModeLabel(state.tavernServerLaunchMode)
+        if (launchModeValueView.text?.toString() != launchModeLabel) {
+            launchModeValueView.text = launchModeLabel
+        }
         if (tavernRuntimePatchSwitch.isChecked != state.tavernRuntimePatchEnabled) {
             tavernRuntimePatchSwitch.isChecked = state.tavernRuntimePatchEnabled
         }
@@ -174,6 +185,29 @@ class SettingsActivityStateController(
             .setSingleChoiceItems(optionLabels, checkedItem) { dialog, which ->
                 val selectedMode = modes[which]
                 viewModel.setHostDisplayMode(selectedMode)
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showLaunchModeDialog(currentMode: TavernServerLaunchMode) {
+        val modes = TavernServerLaunchMode.entries
+        val optionLabels = modes.map(::resolveLaunchModeLabel).toTypedArray()
+        val checkedItem = modes.indexOf(currentMode).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(activity)
+            .setTitle(R.string.bootstrap_settings_host_launch_mode_dialog_title)
+            .setSingleChoiceItems(optionLabels, checkedItem) { dialog, which ->
+                val selectedMode = modes[which]
+                val changed = viewModel.setTavernServerLaunchMode(selectedMode)
+                if (changed) {
+                    onServiceRestartRequired()
+                    Toast.makeText(
+                        activity,
+                        R.string.bootstrap_settings_host_launch_mode_restart_hint,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
                 dialog.dismiss()
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -273,6 +307,14 @@ class SettingsActivityStateController(
             HostDisplayMode.NORMAL -> activity.getString(R.string.bootstrap_settings_host_display_mode_normal)
             HostDisplayMode.STATUS_BAR_HIDDEN -> activity.getString(R.string.bootstrap_settings_host_display_mode_status_bar_hidden)
             HostDisplayMode.IMMERSIVE -> activity.getString(R.string.bootstrap_settings_host_display_mode_immersive)
+        }
+    }
+
+    private fun resolveLaunchModeLabel(mode: TavernServerLaunchMode): String {
+        return when (mode) {
+            TavernServerLaunchMode.AUTO -> activity.getString(R.string.bootstrap_settings_host_launch_mode_auto)
+            TavernServerLaunchMode.FAST -> activity.getString(R.string.bootstrap_settings_host_launch_mode_fast)
+            TavernServerLaunchMode.FULL -> activity.getString(R.string.bootstrap_settings_host_launch_mode_full)
         }
     }
 }

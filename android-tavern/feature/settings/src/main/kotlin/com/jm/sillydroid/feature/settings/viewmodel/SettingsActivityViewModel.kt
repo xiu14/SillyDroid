@@ -7,6 +7,7 @@ import com.jm.sillydroid.core.model.settings.BrowserDataClearOptions
 import com.jm.sillydroid.core.model.settings.HostDisplayMode
 import com.jm.sillydroid.core.model.settings.NodeHeapLimitOptions
 import com.jm.sillydroid.core.model.settings.NodeNewSpaceLimitOptions
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.domain.bootstrap.RuntimeMetadataRepository
 import com.jm.sillydroid.domain.settings.HostPreferencesRepository
 import com.jm.sillydroid.feature.settings.model.SettingsTab
@@ -28,6 +29,7 @@ class SettingsActivityViewModel(
             nodeMaxSemiSpaceMb = hostPreferencesRepository.nodeMaxSemiSpaceMb,
             backgroundOnlyModeEnabled = !hostPreferencesRepository.launchWebViewOnReady,
             backgroundHealthCheckEnabled = hostPreferencesRepository.backgroundHealthCheckEnabled,
+            tavernServerLaunchMode = hostPreferencesRepository.tavernServerLaunchMode,
             tavernRuntimePatchEnabled = hostPreferencesRepository.tavernRuntimePatchEnabled,
             tavernRuntimePatchDisabledModuleIds = hostPreferencesRepository.tavernRuntimePatchDisabledModuleIds,
             tavernRuntimePatchSettingOverrides = hostPreferencesRepository.tavernRuntimePatchSettingOverrides,
@@ -115,6 +117,16 @@ class SettingsActivityViewModel(
             hostPreferencesRepository.backgroundHealthCheckEnabled = enabled
         }
         _uiState.update { current -> current.copy(backgroundHealthCheckEnabled = enabled) }
+        return changed
+    }
+
+    fun setTavernServerLaunchMode(mode: TavernServerLaunchMode): Boolean {
+        // 启动模式只切换服务进程的宿主命令 profile；需要重启 Node 服务后 PATH 才会重建。
+        val changed = hostPreferencesRepository.tavernServerLaunchMode != mode
+        if (changed) {
+            hostPreferencesRepository.tavernServerLaunchMode = mode
+        }
+        _uiState.update { current -> current.copy(tavernServerLaunchMode = mode) }
         return changed
     }
 

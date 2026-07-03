@@ -5,6 +5,7 @@ import com.jm.sillydroid.core.model.settings.BrowserEngine
 import com.jm.sillydroid.core.model.settings.FloatingLogBubblePosition
 import com.jm.sillydroid.core.model.settings.HostDisplayMode
 import com.jm.sillydroid.core.model.settings.LoadedTavernConfig
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.core.model.settings.TavernConfigFieldSpec
 import com.jm.sillydroid.core.model.settings.TavernConfigSectionSpec
 import com.jm.sillydroid.core.model.settings.TavernDataArchiveKind
@@ -43,6 +44,18 @@ interface HostPreferencesRepository {
     var browserPageZoomPercent: Int
     var launchWebViewOnReady: Boolean
     var backgroundHealthCheckEnabled: Boolean
+    // Tavern 服务启动模式只调整宿主暴露给服务进程的命令环境，不改写酒馆源码或 config.yaml。
+    var tavernServerLaunchMode: TavernServerLaunchMode
+    // 兼容旧调用方：AUTO/FAST 都视为“快速路径”，只有 FULL 关闭快速路径。
+    var tavernServerFastLaunchEnabled: Boolean
+        get() = tavernServerLaunchMode != TavernServerLaunchMode.FULL
+        set(value) {
+            tavernServerLaunchMode = if (value) {
+                TavernServerLaunchMode.AUTO
+            } else {
+                TavernServerLaunchMode.FULL
+            }
+        }
     // 是否启用 SillyDroid 对 Tavern 的运行时 patch 预设；默认关，开启后需重启本地服务生效。
     var tavernRuntimePatchEnabled: Boolean
     // 用户在 runtime patch 总开关开启后，手动关闭的模块 id；默认空表示使用预设默认模块。

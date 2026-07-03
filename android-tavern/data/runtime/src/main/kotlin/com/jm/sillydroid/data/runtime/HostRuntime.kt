@@ -7,6 +7,7 @@ import android.os.Build
 import android.system.ErrnoException
 import android.system.Os
 import com.jm.sillydroid.core.model.bootstrap.BootstrapStepDetection
+import com.jm.sillydroid.core.model.settings.TavernServerLaunchMode
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchSettingOverrides
 import com.jm.sillydroid.domain.bootstrap.RuntimePatchSettingOverridesCodec
 import java.io.File
@@ -1737,6 +1738,7 @@ class ServerController(
     private val servicePort: Int,
     private val nodeMaxOldSpaceMb: Int,
     private val nodeMaxSemiSpaceMb: Int,
+    private val tavernServerLaunchMode: TavernServerLaunchMode,
     private val tavernRuntimePatchEnabled: Boolean,
     private val tavernRuntimePatchDisabledModuleIds: Set<String>,
     private val tavernRuntimePatchSettingOverrides: RuntimePatchSettingOverrides,
@@ -1749,7 +1751,9 @@ class ServerController(
             // 0 表示自动；入口脚本仅在正数时才追加 --max-old-space-size。
             "TAVERN_NODE_MAX_OLD_SPACE_MB" to nodeMaxOldSpaceMb.toString(),
             // 0 表示自动；入口脚本仅在正数时才追加 --max-semi-space-size。
-            "TAVERN_NODE_MAX_SEMI_SPACE_MB" to nodeMaxSemiSpaceMb.toString()
+            "TAVERN_NODE_MAX_SEMI_SPACE_MB" to nodeMaxSemiSpaceMb.toString(),
+            // 启动模式只调整服务进程 PATH 中的宿主命令暴露范围，不改酒馆源码或 config.yaml。
+            "SILLYDROID_HOST_COMMAND_PROFILE" to tavernServerLaunchMode.hostCommandProfile
         )
         if (tavernRuntimePatchEnabled) {
             // 首版只暴露总开关；内部使用 performance 预设加载模块化 runtime patch。
@@ -1776,6 +1780,68 @@ class ServerController(
             logFileName = logFileName
         )
         return launcher.start(request)
+    }
+}
+
+data class ServerFastGitInjectionResult(
+    val exitCode: Int,
+    val logExcerpt: String
+) {
+    val succeeded: Boolean
+        get() = exitCode == 0
+}
+
+class ServerFastGitInjector(
+    private val launcher: LinuxRuntimeLauncher,
+    private val paths: HostPaths,
+    private val logFileName: String
+) {
+    fun inject(): ServerFastGitInjectionResult {
+        val scriptFile = File(paths.scriptsDir, "enable-server-fast-git.sh")
+        val logFile = File(paths.logsDir, logFileName)
+        val logStartOffset = logFile.length().coerceAtLeast(0L)
+        val request = LaunchRequest(
+            name = "server-fast-git-injector",
+            scriptFile = scriptFile,
+            workingDirectory = paths.bootstrapRoot,
+            environment = mapOf(
+                "SILLYDROID_HOST_COMMAND_PROFILE" to "server-fast"
+            ),
+            logFileName = logFileName
+        )
+        val process = launcher.start(request)
+        val exitCode = process.waitFor()
+        return ServerFastGitInjectionResult(
+            exitCode = exitCode,
+            logExcerpt = readLogExcerpt(logFile = logFile, startOffset = logStartOffset)
+        )
+    }
+
+    private fun readLogExcerpt(logFile: File, startOffset: Long, maxLines: Int = 16, maxChars: Int = 1400): String {
+        val excerpt = runCatching {
+            if (!logFile.exists()) {
+                return@runCatching ""
+            }
+
+            val normalizedOffset = startOffset.coerceIn(0L, logFile.length())
+            val readStartOffset = maxOf(normalizedOffset, logFile.length() - (maxChars.toLong() * 4L))
+            java.io.RandomAccessFile(logFile, "r").use { reader ->
+                reader.seek(readStartOffset)
+                val bytes = ByteArray((reader.length() - readStartOffset).coerceAtMost(maxChars.toLong() * 4L).toInt())
+                reader.readFully(bytes)
+                String(bytes)
+            }
+                .lines()
+                .takeLast(maxLines)
+                .joinToString("\n") { line -> line.trimEnd() }
+                .trim()
+        }.getOrDefault("")
+
+        if (excerpt.length <= maxChars) {
+            return excerpt
+        }
+
+        return excerpt.takeLast(maxChars).trimStart()
     }
 }
 
