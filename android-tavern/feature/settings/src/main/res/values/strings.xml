@@ -63,6 +63,7 @@
     <string name="bootstrap_settings_remote_backup_now">立即备份</string>
     <string name="bootstrap_settings_remote_backup_refresh">刷新</string>
     <string name="bootstrap_settings_remote_backup_r2_settings">R2设置</string>
+    <string name="bootstrap_settings_remote_backup_import_token">JS导入Token</string>
     <string name="bootstrap_settings_remote_backup_clear_logs">清空日志</string>
     <string name="bootstrap_settings_remote_backup_section_list">备份列表</string>
     <string name="bootstrap_settings_remote_backup_section_logs">备份日志</string>
@@ -110,6 +111,12 @@
     <string name="bootstrap_settings_remote_backup_r2_cleared">R2 配置已清空。</string>
     <string name="bootstrap_settings_remote_backup_r2_clear_confirm_title">清空 R2 配置？</string>
     <string name="bootstrap_settings_remote_backup_r2_clear_confirm_message">会删除 App 内保存的 R2 Account、Bucket、Access Key 和 Secret，不会删除已经上传到 R2 的备份文件。</string>
+    <string name="bootstrap_settings_remote_backup_import_token_dialog_title">JS 导入 Token</string>
+    <string name="bootstrap_settings_remote_backup_import_token_message">PUT 地址：\n%1$s\n\nAuthorization：\nBearer %2$s</string>
+    <string name="bootstrap_settings_remote_backup_import_token_copy">复制Token</string>
+    <string name="bootstrap_settings_remote_backup_import_token_reset">重置Token</string>
+    <string name="bootstrap_settings_remote_backup_import_token_copied">Token 已复制。</string>
+    <string name="bootstrap_settings_remote_backup_import_token_reset_success">Token 已重置。</string>
     <string name="bootstrap_settings_storage_summary">这里按目录查看 STDROID 私有空间占用；聊天、角色和世界书只展示大小，缓存、日志和临时文件可直接清理。</string>
     <string name="bootstrap_settings_storage_section_overview">空间概览</string>
     <string name="bootstrap_settings_storage_refresh">刷新</string>

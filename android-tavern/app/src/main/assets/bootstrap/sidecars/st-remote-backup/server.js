@@ -14,6 +14,9 @@ const CONFIG_FILE = path.join(APP_DIR, 'config.json');
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
 const EMPTY_SHA256 = crypto.createHash('sha256').update('').digest('hex');
 const SILLYDROID_EMBEDDED = process.env.SILLYDROID_EMBEDDED === '1';
+const IMPORT_BIND_HOST = '127.0.0.1';
+const IMPORT_DEFAULT_PORT = 8788;
+const IMPORT_BODY_LIMIT = process.env.ST_IMPORT_BODY_LIMIT || '5mb';
 
 function defaultDataDir() {
   return process.env.DATA_DIR ||
@@ -21,6 +24,35 @@ function defaultDataDir() {
       ? path.join(process.env.TAVERN_DATA_ROOT, 'data')
       : process.env.TAVERN_DATA_ROOT) ||
     (SILLYDROID_EMBEDDED ? path.join(APP_DIR, 'data') : '/root/sillytavern/data');
+}
+
+function parsePort(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : fallback;
+}
+
+function generateImportToken() {
+  return crypto.randomBytes(32)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function ensureImportToken(cfg) {
+  const token = String(cfg.importToken || '').trim();
+  if (token) {
+    return { ...cfg, importToken: token };
+  }
+
+  const withToken = { ...cfg, importToken: generateImportToken() };
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(withToken, null, 2), 'utf8');
+  } catch (error) {
+    console.error('[config] Failed to persist import token:', error.message);
+  }
+  return withToken;
 }
 
 function normalizeEmbeddedConfig(cfg) {
@@ -43,6 +75,9 @@ function loadConfig() {
   const defaults = {
     port: parseInt(process.env.PORT || '8787', 10),
     bindHost: process.env.BIND_HOST || process.env.HOST || '127.0.0.1',
+    importPort: parsePort(process.env.ST_IMPORT_PORT || process.env.IMPORT_PORT || IMPORT_DEFAULT_PORT, IMPORT_DEFAULT_PORT),
+    importBindHost: IMPORT_BIND_HOST,
+    importToken: process.env.ST_IMPORT_TOKEN || process.env.IMPORT_TOKEN || '',
     dataDir: defaultDataDir(),
     backupDir: process.env.BACKUP_DIR || path.join(APP_DIR, 'backups'),
     user: process.env.BASIC_USER || '',
@@ -58,13 +93,13 @@ function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      return normalizeEmbeddedConfig({ ...defaults, ...data });
+      return ensureImportToken(normalizeEmbeddedConfig({ ...defaults, ...data }));
     }
   } catch (e) {
     console.error('[config] Failed to load config.json:', e.message);
   }
 
-  return normalizeEmbeddedConfig(defaults);
+  return ensureImportToken(normalizeEmbeddedConfig(defaults));
 }
 
 async function saveConfig(cfg) {
@@ -76,6 +111,9 @@ function getConfig() {
   const cfg = loadConfig();
   return {
     ...cfg,
+    port: parsePort(cfg.port, 8787),
+    importPort: parsePort(cfg.importPort, IMPORT_DEFAULT_PORT),
+    importBindHost: IMPORT_BIND_HOST,
     r2Prefix: normalizeR2Prefix(cfg.r2Prefix),
     r2Region: cfg.r2Region || 'auto'
   };
@@ -643,9 +681,380 @@ function authGuard(req, res, next) {
   return res.status(401).send('Unauthorized');
 }
 
+function isLoopbackAddress(value) {
+  const address = String(value || '').trim();
+  return address === '127.0.0.1' ||
+    address === '::1' ||
+    address === '::ffff:127.0.0.1' ||
+    address.startsWith('127.');
+}
+
+function isLoopbackRequest(req) {
+  return isLoopbackAddress(req.socket?.remoteAddress) || isLoopbackAddress(req.ip);
+}
+
+function timingSafeEqualString(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''), 'utf8');
+  const rightBuffer = Buffer.from(String(right || ''), 'utf8');
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function importAuthGuard(req, res, next) {
+  const cfg = getConfig();
+  const token = String(cfg.importToken || '').trim();
+  const authorization = String(req.get('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const provided = match ? match[1].trim() : '';
+
+  if (!token || !provided || !timingSafeEqualString(provided, token)) {
+    return res.status(401).json({ ok: false, error: 'invalid import token' });
+  }
+
+  return next();
+}
+
+function importLoopbackGuard(req, res, next) {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'import API is only available from 127.0.0.1' });
+  }
+  return next();
+}
+
+function createUuid() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  const bytes = crypto.randomBytes(16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function timestampForFile(date = new Date()) {
+  return date.toISOString().replace(/[^\d]/g, '').slice(0, 14);
+}
+
+function httpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function validateImportFilename(value) {
+  const filename = String(value || '').trim();
+  if (!filename) {
+    throw httpError(400, 'filename is required');
+  }
+  if (filename !== path.basename(filename) || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+    throw httpError(400, 'filename must be a plain file name');
+  }
+  if (!/^[A-Za-z0-9._-]+\.js$/i.test(filename)) {
+    throw httpError(400, 'filename must contain only A-Z, 0-9, dot, underscore or dash, and end with .js');
+  }
+  if (filename.length > 160) {
+    throw httpError(400, 'filename is too long');
+  }
+  return filename;
+}
+
+function scriptNameFromFilename(filename) {
+  return filename.replace(/\.js$/i, '');
+}
+
+function defaultScriptButton() {
+  return { enabled: true, buttons: [] };
+}
+
+function defaultScriptExportWith() {
+  return { data: true, button: true };
+}
+
+function isScriptTreeScript(value) {
+  return value && typeof value === 'object' && (value.type === undefined || value.type === 'script');
+}
+
+function findScriptMatches(scriptTrees, predicate) {
+  const matches = [];
+  const visit = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item, index) => {
+      if (!item || typeof item !== 'object') return;
+      if (item.type === 'folder' && Array.isArray(item.scripts)) {
+        visit(item.scripts);
+        return;
+      }
+      if (isScriptTreeScript(item) && predicate(item)) {
+        matches.push({ array: items, index, script: item });
+      }
+    });
+  };
+  visit(scriptTrees);
+  return matches;
+}
+
+function removeMatchingScripts(scriptTrees, predicate, keepId) {
+  let removed = 0;
+  const filterItems = (items) => {
+    if (!Array.isArray(items)) return;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (!item || typeof item !== 'object') continue;
+      if (item.type === 'folder' && Array.isArray(item.scripts)) {
+        filterItems(item.scripts);
+        continue;
+      }
+      if (isScriptTreeScript(item) && item.id !== keepId && predicate(item)) {
+        items.splice(index, 1);
+        removed += 1;
+      }
+    }
+  };
+  filterItems(scriptTrees);
+  return removed;
+}
+
+function ensureObject(parent, key) {
+  if (!parent[key] || typeof parent[key] !== 'object' || Array.isArray(parent[key])) {
+    parent[key] = {};
+  }
+  return parent[key];
+}
+
+async function readSettingsJson(settingsFile) {
+  if (!await fileExists(settingsFile)) {
+    return {};
+  }
+
+  const raw = await fsp.readFile(settingsFile, 'utf8');
+  try {
+    return raw.trim() ? JSON.parse(raw) : {};
+  } catch (error) {
+    throw httpError(409, `settings.json is invalid: ${error.message}`);
+  }
+}
+
+async function writeJsonAtomic(file, data) {
+  await ensureDir(path.dirname(file));
+  const temp = path.join(path.dirname(file), `.tmp-${path.basename(file)}-${process.pid}-${Date.now()}`);
+  try {
+    await fsp.writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
+    await fsp.rename(temp, file);
+  } catch (error) {
+    await fsp.rm(temp, { force: true }).catch(() => { });
+    throw error;
+  }
+}
+
+async function backupExistingImportData(cfg, settingsFile, filename, existingScript) {
+  const backupDir = path.join(cfg.dataDir, 'backups', 'stdroid-js-import');
+  const stamp = timestampForFile();
+  await ensureDir(backupDir);
+
+  let settingsBackup = '';
+  if (await fileExists(settingsFile)) {
+    settingsBackup = path.join(backupDir, `settings.${stamp}.json`);
+    await fsp.copyFile(settingsFile, settingsBackup);
+  }
+
+  let scriptBackup = '';
+  if (existingScript) {
+    scriptBackup = path.join(backupDir, `${filename}.${stamp}.script.json`);
+    await fsp.writeFile(scriptBackup, JSON.stringify(existingScript, null, 2), 'utf8');
+  }
+
+  return {
+    settingsBackup,
+    scriptBackup
+  };
+}
+
+function parseEnableParam(value) {
+  if (value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw httpError(400, 'enable must be true or false');
+}
+
+function buildImportedScript({ filename, scriptName, content, existingScript, enable }) {
+  const now = new Date().toISOString();
+  const existingData = existingScript && existingScript.data && typeof existingScript.data === 'object' && !Array.isArray(existingScript.data)
+    ? existingScript.data
+    : {};
+  return {
+    type: 'script',
+    enabled: enable === null ? (existingScript ? existingScript.enabled === true : false) : enable,
+    name: existingScript?.name || scriptName,
+    id: existingScript?.id || createUuid(),
+    content,
+    info: `Imported by Stdroid from ${filename} at ${now}`,
+    button: existingScript?.button && typeof existingScript.button === 'object' && !Array.isArray(existingScript.button)
+      ? existingScript.button
+      : defaultScriptButton(),
+    data: {
+      ...existingData,
+      stdroidImportKey: filename,
+      stdroidImportedAt: now,
+      stdroidImportSource: 'loopback-api'
+    },
+    export_with: existingScript?.export_with && typeof existingScript.export_with === 'object' && !Array.isArray(existingScript.export_with)
+      ? existingScript.export_with
+      : defaultScriptExportWith()
+  };
+}
+
+let importWriteLock = Promise.resolve();
+
+async function withImportWriteLock(task) {
+  const previous = importWriteLock;
+  let release;
+  importWriteLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => { });
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
+async function importGlobalJsSlashRunnerScript({ cfg, filename, content, enable }) {
+  const settingsFile = path.join(cfg.dataDir, 'default-user', 'settings.json');
+  const scriptName = scriptNameFromFilename(filename);
+  const settings = await readSettingsJson(settingsFile);
+  const extensionSettings = ensureObject(settings, 'extension_settings');
+  const tavernHelper = ensureObject(extensionSettings, 'tavern_helper');
+  const scriptSettings = ensureObject(tavernHelper, 'script');
+  if (!Array.isArray(scriptSettings.scripts)) {
+    scriptSettings.scripts = [];
+  }
+
+  const byImportKey = findScriptMatches(
+    scriptSettings.scripts,
+    (script) => script.data && (script.data.stdroidImportKey === filename || script.data.sillydroidImportKey === filename)
+  );
+  const byName = byImportKey.length ? [] : findScriptMatches(
+    scriptSettings.scripts,
+    (script) => script.name === scriptName
+  );
+  const match = byImportKey[0] || byName[0] || null;
+  const existingScript = match?.script || null;
+  const importedScript = buildImportedScript({
+    filename,
+    scriptName,
+    content,
+    existingScript,
+    enable
+  });
+
+  const backups = await backupExistingImportData(cfg, settingsFile, filename, existingScript);
+  if (match) {
+    match.array[match.index] = importedScript;
+  } else {
+    scriptSettings.scripts.push(importedScript);
+  }
+
+  const deduped = removeMatchingScripts(
+    scriptSettings.scripts,
+    (script) => script.data && (script.data.stdroidImportKey === filename || script.data.sillydroidImportKey === filename),
+    importedScript.id
+  );
+
+  if (enable === true) {
+    const enabled = ensureObject(scriptSettings, 'enabled');
+    enabled.global = true;
+  }
+
+  await writeJsonAtomic(settingsFile, settings);
+
+  return {
+    action: match ? 'replaced' : 'created',
+    deduped,
+    script: importedScript,
+    settingsFile,
+    backup: backups.scriptBackup || '',
+    settingsBackup: backups.settingsBackup || ''
+  };
+}
+
+function createImportApp() {
+  const importApp = express();
+  importApp.use(importLoopbackGuard);
+
+  importApp.get('/health', (req, res) => {
+    const cfg = getConfig();
+    res.json({
+      ok: true,
+      importPort: cfg.importPort,
+      importBindHost: cfg.importBindHost
+    });
+  });
+
+  importApp.put(
+    '/api/import/js-slash-runner/global/:filename',
+    importAuthGuard,
+    express.raw({ type: '*/*', limit: IMPORT_BODY_LIMIT }),
+    async (req, res) => {
+      try {
+        const cfg = getConfig();
+        const filename = validateImportFilename(req.params.filename);
+        const enable = parseEnableParam(req.query.enable);
+        const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+        const content = body.toString('utf8');
+        if (!content.trim()) {
+          return res.status(400).json({ ok: false, error: 'script body is empty' });
+        }
+
+        const result = await withImportWriteLock(() => importGlobalJsSlashRunnerScript({
+          cfg,
+          filename,
+          content,
+          enable
+        }));
+
+        console.log(`[import] js-slash-runner global ${result.action}: ${filename}, enabled=${result.script.enabled}, deduped=${result.deduped}`);
+        res.json({
+          ok: true,
+          target: 'global',
+          filename,
+          name: result.script.name,
+          id: result.script.id,
+          enabled: result.script.enabled,
+          action: result.action,
+          deduped: result.deduped,
+          path: `${result.settingsFile}#extension_settings.tavern_helper.script.scripts`,
+          backup: result.backup || undefined,
+          settingsBackup: result.settingsBackup || undefined,
+          reloadRequired: true
+        });
+      } catch (error) {
+        const status = error.status || 500;
+        console.error('[import] error:', error && error.stack || error);
+        res.status(status).json({ ok: false, error: error.message || 'import failed' });
+      }
+    }
+  );
+
+  importApp.use((err, req, res, next) => {
+    if (!err) return next();
+    const status = err.status || 500;
+    return res.status(status).json({ ok: false, error: err.message || 'request failed' });
+  });
+
+  return importApp;
+}
+
 const startupConfig = getConfig();
 const PORT = startupConfig.port;
 const BIND_HOST = startupConfig.bindHost || '127.0.0.1';
+const JS_IMPORT_PORT = startupConfig.importPort;
+const JS_IMPORT_BIND_HOST = startupConfig.importBindHost || IMPORT_BIND_HOST;
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -930,6 +1339,10 @@ app.get('/config', (req, res) => {
       config: {
         port: cfg.port,
         bindHost: cfg.bindHost,
+        importPort: cfg.importPort,
+        importBindHost: cfg.importBindHost,
+        importToken: isLoopbackRequest(req) ? cfg.importToken : '',
+        hasImportToken: !!cfg.importToken,
         dataDir: cfg.dataDir,
         backupDir: cfg.backupDir,
         user: cfg.user,
@@ -957,6 +1370,9 @@ app.post('/config', async (req, res) => {
       backupDir,
       user,
       pass,
+      importPort,
+      importToken,
+      resetImportToken,
       r2AccountId,
       r2Bucket,
       r2AccessKeyId,
@@ -971,6 +1387,13 @@ app.post('/config', async (req, res) => {
       ...currentCfg,
       port: typeof port === 'number' ? port : (parseInt(port, 10) || currentCfg.port),
       bindHost: bindHost || currentCfg.bindHost || '127.0.0.1',
+      importPort: parsePort(importPort, currentCfg.importPort || IMPORT_DEFAULT_PORT),
+      importBindHost: IMPORT_BIND_HOST,
+      importToken: resetImportToken === true || resetImportToken === 'true'
+        ? generateImportToken()
+        : (importToken !== undefined && String(importToken).trim() !== ''
+          ? String(importToken).trim()
+          : currentCfg.importToken),
       dataDir: dataDir || currentCfg.dataDir,
       backupDir: backupDir || currentCfg.backupDir,
       user: user !== undefined ? user : currentCfg.user,
@@ -986,8 +1409,22 @@ app.post('/config', async (req, res) => {
     });
 
     await saveConfig(newCfg);
-    console.log(`[config] saved: port=${newCfg.port}, dataDir=${newCfg.dataDir}, bucket=${newCfg.r2Bucket}, prefix=${newCfg.r2Prefix}`);
-    res.json({ ok: true });
+    console.log(`[config] saved: port=${newCfg.port}, importPort=${newCfg.importPort}, dataDir=${newCfg.dataDir}, bucket=${newCfg.r2Bucket}, prefix=${newCfg.r2Prefix}`);
+    res.json({
+      ok: true,
+      config: {
+        importPort: newCfg.importPort,
+        importBindHost: newCfg.importBindHost,
+        importToken: isLoopbackRequest(req) ? newCfg.importToken : '',
+        hasImportToken: !!newCfg.importToken,
+        r2AccountId: newCfg.r2AccountId,
+        r2Bucket: newCfg.r2Bucket,
+        r2AccessKeyId: newCfg.r2AccessKeyId,
+        r2Prefix: newCfg.r2Prefix,
+        hasR2SecretAccessKey: !!newCfg.r2SecretAccessKey,
+        r2Configured: hasR2Config(newCfg)
+      }
+    });
   } catch (e) {
     console.error('[config] save error:', e && e.stack || e);
     res.status(500).json({ ok: false, error: e.message });
@@ -1017,4 +1454,8 @@ app.post('/restart', (req, res) => {
 
 app.listen(PORT, BIND_HOST, () => {
   console.log(`[st-remote-backup] listening on ${BIND_HOST}:${PORT}, DATA_DIR=${startupConfig.dataDir}, BACKUP_DIR=${startupConfig.backupDir}`);
+});
+
+createImportApp().listen(JS_IMPORT_PORT, JS_IMPORT_BIND_HOST, () => {
+  console.log(`[st-js-import] listening on ${JS_IMPORT_BIND_HOST}:${JS_IMPORT_PORT}, DATA_DIR=${startupConfig.dataDir}`);
 });

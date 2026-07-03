@@ -104,6 +104,8 @@ class RemoteBackupRepositoryImpl(
         val json = request(method = "GET", path = "/config")
         val config = json.optJSONObject("config") ?: JSONObject()
         return RemoteBackupConfig(
+            importPort = config.optInt("importPort", defaultImportPort),
+            importToken = config.optString("importToken"),
             r2AccountId = config.optString("r2AccountId"),
             r2Bucket = config.optString("r2Bucket"),
             r2AccessKeyId = config.optString("r2AccessKeyId"),
@@ -124,6 +126,16 @@ class RemoteBackupRepositoryImpl(
             body.put("r2SecretAccessKey", secret)
         }
         request(method = "POST", path = "/config", body = body)
+    }
+
+    override suspend fun resetImportToken(): String {
+        val json = request(
+            method = "POST",
+            path = "/config",
+            body = JSONObject().put("resetImportToken", true)
+        )
+        val config = json.optJSONObject("config") ?: JSONObject()
+        return config.optString("importToken")
     }
 
     private fun request(
@@ -182,6 +194,7 @@ class RemoteBackupRepositoryImpl(
 
     private companion object {
         private const val defaultBaseUrl = "http://127.0.0.1:8787"
+        private const val defaultImportPort = 8788
         private const val defaultConnectTimeoutMs = 5000
         private const val defaultReadTimeoutMs = 15000
         private const val longOperationTimeoutMs = 180000

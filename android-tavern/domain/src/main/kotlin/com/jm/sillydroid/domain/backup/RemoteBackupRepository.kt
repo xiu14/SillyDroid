@@ -34,6 +34,8 @@ data class RemoteBackupDeleteResult(
 )
 
 data class RemoteBackupConfig(
+    val importPort: Int,
+    val importToken: String,
     val r2AccountId: String,
     val r2Bucket: String,
     val r2AccessKeyId: String,
@@ -61,4 +63,5 @@ interface RemoteBackupRepository {
     suspend fun clearLogs()
     suspend fun config(): RemoteBackupConfig
     suspend fun saveConfig(draft: RemoteBackupConfigDraft)
+    suspend fun resetImportToken(): String
 }

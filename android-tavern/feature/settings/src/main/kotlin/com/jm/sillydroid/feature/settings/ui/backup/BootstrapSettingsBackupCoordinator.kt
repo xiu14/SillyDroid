@@ -1,5 +1,7 @@
 package com.jm.sillydroid.feature.settings.ui.backup
 
+import android.content.ClipData
+import android.content.Context
 import android.text.InputType
 import android.text.format.DateFormat
 import android.view.Gravity
@@ -52,6 +54,7 @@ class BootstrapSettingsBackupCoordinator(
     private lateinit var backupNowButton: MaterialButton
     private lateinit var refreshButton: MaterialButton
     private lateinit var r2SettingsButton: MaterialButton
+    private lateinit var importTokenButton: MaterialButton
     private lateinit var clearLogsButton: MaterialButton
     private lateinit var listContainer: LinearLayout
     private lateinit var emptyListView: TextView
@@ -140,6 +143,7 @@ class BootstrapSettingsBackupCoordinator(
         backupNowButton.setOnClickListener { createBackup() }
         refreshButton.setOnClickListener { refresh(showFailure = true) }
         r2SettingsButton.setOnClickListener { showR2ConfigDialog() }
+        importTokenButton.setOnClickListener { showImportTokenDialog() }
         clearLogsButton.setOnClickListener { clearBackupLogs() }
     }
 
@@ -155,6 +159,13 @@ class BootstrapSettingsBackupCoordinator(
         }
         r2SettingsButton = addActionButton(rowTwo, R.string.bootstrap_settings_remote_backup_r2_settings, weight = 1f)
         clearLogsButton = addActionButton(rowTwo, R.string.bootstrap_settings_remote_backup_clear_logs, weight = 1f, addStartMargin = true)
+
+        val rowThree = createButtonRow().apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dimen(R.dimen.sillydroid_space_xs)
+            }
+        }
+        importTokenButton = addActionButton(rowThree, R.string.bootstrap_settings_remote_backup_import_token, weight = 1f)
     }
 
     private fun refresh(showFailure: Boolean) {
@@ -320,6 +331,98 @@ class BootstrapSettingsBackupCoordinator(
                 currentLogs = emptyList()
                 renderLogs()
                 showMessage(activity.getString(R.string.bootstrap_settings_remote_backup_logs_cleared))
+            }.onFailure { error ->
+                showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
+            }
+        }
+    }
+
+    private fun showImportTokenDialog() {
+        if (busy) {
+            return
+        }
+
+        activity.lifecycleScope.launch {
+            setBusyState(true)
+            val result = withContext(dispatchers.io) {
+                runCatching { backupRepository.config() }
+            }
+            setBusyState(false)
+
+            result.onSuccess { config ->
+                currentConfig = config
+                showImportTokenDialog(config)
+            }.onFailure { error ->
+                showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
+            }
+        }
+    }
+
+    private fun showImportTokenDialog(config: RemoteBackupConfig) {
+        val endpoint = "http://127.0.0.1:${config.importPort}/api/import/js-slash-runner/global/latest.js"
+        val content = TextView(activity).apply {
+            TextViewCompat.setTextAppearance(this, R.style.TextAppearance_SillyDroid_SettingsBody)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setTextColor(MaterialColors.getColor(activity, MaterialR.attr.colorOnSurfaceVariant, 0))
+            setPadding(
+                dimen(R.dimen.sillydroid_panel_padding),
+                dimen(R.dimen.sillydroid_space_sm),
+                dimen(R.dimen.sillydroid_panel_padding),
+                0
+            )
+            text = activity.getString(
+                R.string.bootstrap_settings_remote_backup_import_token_message,
+                endpoint,
+                config.importToken.ifBlank { "-" }
+            )
+        }
+
+        val dialog = MaterialAlertDialogBuilder(activity)
+            .setTitle(R.string.bootstrap_settings_remote_backup_import_token_dialog_title)
+            .setView(content)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(R.string.bootstrap_settings_remote_backup_import_token_reset, null)
+            .setPositiveButton(R.string.bootstrap_settings_remote_backup_import_token_copy, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                copyImportToken(config.importToken)
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                dialog.dismiss()
+                resetImportToken()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun copyImportToken(token: String) {
+        if (token.isBlank()) {
+            return
+        }
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Stdroid JS import token", token))
+        showMessage(activity.getString(R.string.bootstrap_settings_remote_backup_import_token_copied))
+    }
+
+    private fun resetImportToken() {
+        if (busy) {
+            return
+        }
+
+        activity.lifecycleScope.launch {
+            setBusyState(true)
+            val result = withContext(dispatchers.io) {
+                runCatching { backupRepository.resetImportToken() }
+            }
+            setBusyState(false)
+
+            result.onSuccess { token ->
+                currentConfig = currentConfig?.copy(importToken = token)
+                showMessage(activity.getString(R.string.bootstrap_settings_remote_backup_import_token_reset_success))
+                currentConfig?.let(::showImportTokenDialog)
             }.onFailure { error ->
                 showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
             }
@@ -611,6 +714,7 @@ class BootstrapSettingsBackupCoordinator(
         backupNowButton.isEnabled = !busy
         refreshButton.isEnabled = !busy
         r2SettingsButton.isEnabled = !busy
+        importTokenButton.isEnabled = !busy
         clearLogsButton.isEnabled = !busy
     }
 
