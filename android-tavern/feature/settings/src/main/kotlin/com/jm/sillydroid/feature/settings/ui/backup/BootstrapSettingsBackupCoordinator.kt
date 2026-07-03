@@ -359,7 +359,7 @@ class BootstrapSettingsBackupCoordinator(
     }
 
     private fun showImportTokenDialog(config: RemoteBackupConfig) {
-        val endpoint = "http://127.0.0.1:${config.importPort}/api/import/js-slash-runner/global/latest.js"
+        val endpoint = "http://127.0.0.1:${config.importPort}/api/import/js-slash-runner/global/model-direct-chatbox.js?displayName=%E6%A8%A1%E5%9E%8B%E7%9B%B4%E8%BF%9EChatbox"
         val content = TextView(activity).apply {
             TextViewCompat.setTextAppearance(this, R.style.TextAppearance_SillyDroid_SettingsBody)
             typeface = android.graphics.Typeface.MONOSPACE

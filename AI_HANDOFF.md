@@ -220,13 +220,31 @@ ANDROID_HOME=/root/workspace/android-sdk ANDROID_SDK_ROOT=/root/workspace/androi
 ./gradlew --no-daemon --console=plain -p android-tavern :app:assembleDebug
 ```
 
-复制 APK 到用户常用路径：
+构建完成后直接使用 Gradle 原始产物：
 
-```bash
-cp android-tavern/app/build/outputs/apk/debug/app-debug.apk /root/workspace/stdroid-customdebug.apk
+```text
+/root/workspace/SillyDroid/android-tavern/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-用户通常直接安装这个输出测试；以后不再额外复制 `sillydroid-custom-debug.apk`。
+以后不再额外复制或改名 APK。
+
+## Stdroid JS-Slash-Runner 导入 API
+
+当前 8788 本机导入 API 只支持全局脚本：
+
+```bash
+curl -f -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/javascript" \
+  --data-binary "@model-direct-chatbox.js" \
+  "http://127.0.0.1:8788/api/import/js-slash-runner/global/model-direct-chatbox.js?displayName=%E6%A8%A1%E5%9E%8B%E7%9B%B4%E8%BF%9EChatbox"
+```
+
+- URL 末尾的 `filename` 必须是稳定英文 key，只允许字母、数字、点、下划线、短横线，并要求 `.js` 结尾。
+- `displayName` 是 JS-Slash-Runner 里首次创建脚本时显示的中文名，需要 URL encode。
+- 重复导入同一个 `filename` 会按 `data.stdroidImportKey` 替换同一脚本，并保留旧脚本 `id`、启用状态和用户手动改过的 `name`。
+- 如果旧脚本没有 `stdroidImportKey`，导入时会尝试按英文名或 `displayName` 接管一次。
+- 返回 `reloadRequired: true` 时，刷新 Tavern 页面让 JS-Slash-Runner 重新读取脚本。
 
 ## 常见问题和排查方向
 
@@ -276,7 +294,7 @@ CANNOT LINK EXECUTABLE ".../libtermux-node.so": library "libcares.so" not found
 - 推送前先 `git status --short`。
 - 合并上游前先 `git fetch origin --prune --tags`。
 - 用户 fork 推送优先 SSH，不要使用明文 token。
-- 构建成功后再复制 APK。
+- 构建成功后直接使用 `android-tavern/app/build/outputs/apk/debug/app-debug.apk`。
 - 修改设置页时要同步更新 `SettingsTabTest`。
 - 修改图标后务必检查 adaptive background。
 - 备份、聊天记录、角色、世界书相关删除功能要非常谨慎，默认只做安全清理。
@@ -312,10 +330,10 @@ ANDROID_HOME=/root/workspace/android-sdk ANDROID_SDK_ROOT=/root/workspace/androi
 ./gradlew --no-daemon --console=plain -p android-tavern :app:assembleDebug
 ```
 
-5. 复制 APK：
+5. APK 产物路径：
 
-```bash
-cp android-tavern/app/build/outputs/apk/debug/app-debug.apk /root/workspace/stdroid-customdebug.apk
+```text
+/root/workspace/SillyDroid/android-tavern/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 6. 用户要求推送时：

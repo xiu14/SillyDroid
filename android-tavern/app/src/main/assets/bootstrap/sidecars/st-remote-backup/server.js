@@ -766,6 +766,18 @@ function scriptNameFromFilename(filename) {
   return filename.replace(/\.js$/i, '');
 }
 
+function normalizeScriptDisplayName(value) {
+  const displayName = String(value || '').trim();
+  if (!displayName) return '';
+  if (displayName.length > 120) {
+    throw httpError(400, 'displayName is too long');
+  }
+  if (/[\u0000-\u001f\u007f]/.test(displayName)) {
+    throw httpError(400, 'displayName contains control characters');
+  }
+  return displayName;
+}
+
 function defaultScriptButton() {
   return { enabled: true, buttons: [] };
 }
@@ -881,7 +893,7 @@ function parseEnableParam(value) {
   throw httpError(400, 'enable must be true or false');
 }
 
-function buildImportedScript({ filename, scriptName, content, existingScript, enable }) {
+function buildImportedScript({ filename, scriptName, displayName, content, existingScript, enable }) {
   const now = new Date().toISOString();
   const existingData = existingScript && existingScript.data && typeof existingScript.data === 'object' && !Array.isArray(existingScript.data)
     ? existingScript.data
@@ -889,7 +901,7 @@ function buildImportedScript({ filename, scriptName, content, existingScript, en
   return {
     type: 'script',
     enabled: enable === null ? (existingScript ? existingScript.enabled === true : false) : enable,
-    name: existingScript?.name || scriptName,
+    name: existingScript?.name || displayName || scriptName,
     id: existingScript?.id || createUuid(),
     content,
     info: `Imported by Stdroid from ${filename} at ${now}`,
@@ -900,6 +912,7 @@ function buildImportedScript({ filename, scriptName, content, existingScript, en
       ...existingData,
       stdroidImportKey: filename,
       stdroidImportedAt: now,
+      stdroidDisplayName: existingData.stdroidDisplayName || displayName || undefined,
       stdroidImportSource: 'loopback-api'
     },
     export_with: existingScript?.export_with && typeof existingScript.export_with === 'object' && !Array.isArray(existingScript.export_with)
@@ -924,7 +937,7 @@ async function withImportWriteLock(task) {
   }
 }
 
-async function importGlobalJsSlashRunnerScript({ cfg, filename, content, enable }) {
+async function importGlobalJsSlashRunnerScript({ cfg, filename, displayName, content, enable }) {
   const settingsFile = path.join(cfg.dataDir, 'default-user', 'settings.json');
   const scriptName = scriptNameFromFilename(filename);
   const settings = await readSettingsJson(settingsFile);
@@ -941,13 +954,14 @@ async function importGlobalJsSlashRunnerScript({ cfg, filename, content, enable 
   );
   const byName = byImportKey.length ? [] : findScriptMatches(
     scriptSettings.scripts,
-    (script) => script.name === scriptName
+    (script) => script.name === scriptName || (displayName && script.name === displayName)
   );
   const match = byImportKey[0] || byName[0] || null;
   const existingScript = match?.script || null;
   const importedScript = buildImportedScript({
     filename,
     scriptName,
+    displayName,
     content,
     existingScript,
     enable
@@ -1005,6 +1019,7 @@ function createImportApp() {
         const cfg = getConfig();
         const filename = validateImportFilename(req.params.filename);
         const enable = parseEnableParam(req.query.enable);
+        const displayName = normalizeScriptDisplayName(req.query.displayName || req.get('x-script-display-name'));
         const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
         const content = body.toString('utf8');
         if (!content.trim()) {
@@ -1014,15 +1029,17 @@ function createImportApp() {
         const result = await withImportWriteLock(() => importGlobalJsSlashRunnerScript({
           cfg,
           filename,
+          displayName,
           content,
           enable
         }));
 
-        console.log(`[import] js-slash-runner global ${result.action}: ${filename}, enabled=${result.script.enabled}, deduped=${result.deduped}`);
+        console.log(`[import] js-slash-runner global ${result.action}: ${filename}, name=${result.script.name}, enabled=${result.script.enabled}, deduped=${result.deduped}`);
         res.json({
           ok: true,
           target: 'global',
           filename,
+          displayName: result.script.name,
           name: result.script.name,
           id: result.script.id,
           enabled: result.script.enabled,

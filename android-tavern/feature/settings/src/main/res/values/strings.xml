@@ -112,7 +112,7 @@
     <string name="bootstrap_settings_remote_backup_r2_clear_confirm_title">清空 R2 配置？</string>
     <string name="bootstrap_settings_remote_backup_r2_clear_confirm_message">会删除 App 内保存的 R2 Account、Bucket、Access Key 和 Secret，不会删除已经上传到 R2 的备份文件。</string>
     <string name="bootstrap_settings_remote_backup_import_token_dialog_title">JS 导入 Token</string>
-    <string name="bootstrap_settings_remote_backup_import_token_message">PUT 地址：\n%1$s\n\nAuthorization：\nBearer %2$s</string>
+    <string name="bootstrap_settings_remote_backup_import_token_message">示例 PUT 地址：\n%1$s\n\nAuthorization：\nBearer %2$s</string>
     <string name="bootstrap_settings_remote_backup_import_token_copy">复制Token</string>
     <string name="bootstrap_settings_remote_backup_import_token_reset">重置Token</string>
     <string name="bootstrap_settings_remote_backup_import_token_copied">Token 已复制。</string>
