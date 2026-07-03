@@ -3,7 +3,7 @@
     <string name="bootstrap_settings_title">SillyDroid设置</string>
     <string name="bootstrap_settings_actions_title">常用操作</string>
     <string name="bootstrap_settings_tab_data">高级</string>
-    <string name="bootstrap_settings_tab_tavern_shell">Tavern壳</string>
+    <string name="bootstrap_settings_tab_tavern_shell">Tavern</string>
     <string name="bootstrap_settings_tab_backup">备份</string>
     <string name="bootstrap_settings_tab_storage">存储</string>
     <string name="bootstrap_settings_tab_settings">酒馆设置</string>
@@ -53,8 +53,8 @@
     <string name="bootstrap_settings_tavern_shell_password_hint">站点密码</string>
     <string name="bootstrap_settings_tavern_shell_clear_auth">清除当前站点登录信息</string>
     <string name="bootstrap_settings_tavern_shell_clear_auth_done">已清除当前站点登录信息。</string>
-    <string name="bootstrap_settings_tavern_shell_save">保存 Tavern 壳设置</string>
-    <string name="bootstrap_settings_tavern_shell_saved">Tavern 壳设置已保存。</string>
+    <string name="bootstrap_settings_tavern_shell_save">保存 Tavern 设置</string>
+    <string name="bootstrap_settings_tavern_shell_saved">Tavern 设置已保存。</string>
     <string name="bootstrap_settings_remote_backup_summary">这里直接管理 8787 本地备份服务：手动备份、每日自动备份、恢复备份、查看日志和 R2 配置都在 App 内完成。</string>
     <string name="bootstrap_settings_remote_backup_section_auto">自动备份</string>
     <string name="bootstrap_settings_remote_backup_auto_title">启用自动备份</string>
