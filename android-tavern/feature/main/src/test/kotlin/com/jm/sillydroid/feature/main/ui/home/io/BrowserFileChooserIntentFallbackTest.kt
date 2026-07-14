@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+/** 验证系统文件选择器 fallback 保留 MIME、分类和多选语义。 */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BrowserFileChooserIntentFallbackTest {
