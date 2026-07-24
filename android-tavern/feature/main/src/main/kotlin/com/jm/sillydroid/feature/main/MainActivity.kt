@@ -13,14 +13,10 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.annotation.ColorInt
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContract
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.pm.PackageInfoCompat
-import androidx.core.app.ActivityOptionsCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewCompat
@@ -108,37 +104,6 @@ class MainActivity : AppCompatActivity() {
     private var lastWebViewNavigationBarColorHex: String? = null
     private var remoteBackupAutoInFlight = false
     private var lastRemoteBackupAutoAttemptAt = 0L
-    private var feedbackImageFloatingBrowserSuppression: AutoCloseable? = null
-
-    private val feedbackImageLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        releaseFeedbackImageFloatingBrowserSuppression()
-        if (::floatingLogsHost.isInitialized) {
-            floatingLogsHost.onFeedbackImagesSelected(uris)
-        }
-    }
-
-    private val suppressingFeedbackImageLauncher = object : ActivityResultLauncher<String>() {
-        /** 打开系统图片选择器前持有 overlay 抑制令牌，返回或启动失败后对称释放。 */
-        override fun launch(input: String, options: ActivityOptionsCompat?) {
-            releaseFeedbackImageFloatingBrowserSuppression()
-            feedbackImageFloatingBrowserSuppression =
-                floatingBrowserRuntime.suppressionRegistry.acquire("feedback_image_picker")
-            runCatching { feedbackImageLauncher.launch(input, options) }
-                .onFailure {
-                    releaseFeedbackImageFloatingBrowserSuppression()
-                    throw it
-                }
-        }
-
-        /** 由真实 launcher 处理注销，包装器不维护第二份 ActivityResult 注册。 */
-        override fun unregister() {
-            feedbackImageLauncher.unregister()
-        }
-
-        /** 暴露真实 launcher 契约，保持 ActivityResult 类型检查一致。 */
-        override fun getContract(): ActivityResultContract<String, *> = feedbackImageLauncher.contract
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         recordActivityLifecycleDiagnostic(
@@ -218,15 +183,6 @@ class MainActivity : AppCompatActivity() {
             reloadTavernWebView = { browserHost.reloadTavernWebView(source = "floating_logs_button") },
             applyBrowserZoomPercent = ::applyBrowserZoomPercentFromFloatingLogs,
             applyBrowserPageZoomPercent = ::applyBrowserPageZoomPercentFromFloatingLogs,
-            feedbackImageLauncher = suppressingFeedbackImageLauncher,
-            feedbackUploadConfig = {
-                HostLogBundleUploadRequestConfig(
-                    uploadUrl = appGraph.appUpdateBuildConfig.crashLogUploadUrl,
-                    writerApiKey = appGraph.appUpdateBuildConfig.crashLogUploadWriterApiKey,
-                    source = "floating-log-feedback",
-                    crashType = "user-feedback"
-                )
-            },
             recordHostDiagnostic = ::recordDefaultHostDiagnostic
         )
         browserHost = createBrowserHost()
@@ -327,7 +283,6 @@ class MainActivity : AppCompatActivity() {
             event = "on_destroy",
             extra = "browserHostInitialized=${::browserHost.isInitialized} changingConfigMask=$changingConfigurations"
         )
-        releaseFeedbackImageFloatingBrowserSuppression()
         floatingBrowserRuntime.uiDelegateRegistry.unregister(this)
         if (::browserHost.isInitialized) {
             val browserAttachedToOverlay =
@@ -414,12 +369,6 @@ class MainActivity : AppCompatActivity() {
             category = "floating-browser",
             body = "event=permission_revoked action=disable_feature"
         )
-    }
-
-    /** 图片选择器完成、失败或 Activity 销毁时对称释放 overlay 抑制令牌。 */
-    private fun releaseFeedbackImageFloatingBrowserSuppression() {
-        feedbackImageFloatingBrowserSuppression?.close()
-        feedbackImageFloatingBrowserSuppression = null
     }
 
     private fun maybePromptCrashLogUploadConsent(): Boolean {
