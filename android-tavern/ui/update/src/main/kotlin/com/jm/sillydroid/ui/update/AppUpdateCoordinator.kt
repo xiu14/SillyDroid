@@ -163,7 +163,8 @@ class AppUpdateCoordinator(
                     AppUpdateRequestConfig(
                         latestReleaseMetadataUrl = buildConfig.latestReleaseMetadataUrl,
                         buildType = buildConfig.buildType,
-                        currentVersionName = resolveCurrentVersionName()
+                        currentVersionName = resolveCurrentVersionName(),
+                        currentVersionCode = resolveCurrentPackageInfo().longVersionCode
                     )
                 )
             }

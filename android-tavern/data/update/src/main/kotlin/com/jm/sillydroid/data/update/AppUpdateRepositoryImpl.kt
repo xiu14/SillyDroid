@@ -46,8 +46,10 @@ class AppUpdateRepositoryImpl(
     }
 
     override suspend fun fetchLatestAvailableRelease(config: AppUpdateRequestConfig): AvailableAppRelease? {
-        return SiteLatestReleaseParser.parseLatestAvailableRelease(
-            latestReleaseState = fetchJsonObject(config.latestReleaseMetadataUrl),
+        // filesite 对从未发布过的 App 返回 404，视为没有可用更新而不是检查失败。
+        val versionInfo = fetchJsonObject(config.latestReleaseMetadataUrl) ?: return null
+        return FilesiteVersionParser.parseLatestAvailableRelease(
+            versionInfo = versionInfo,
             config = config
         )
     }
@@ -367,11 +369,11 @@ class AppUpdateRepositoryImpl(
         return digest.digest().joinToString(separator = "") { byte -> "%02x".format(Locale.US, byte) }
     }
 
-    private fun fetchJsonObject(url: String): JSONObject {
-        return JSONObject(fetchText(url))
+    private fun fetchJsonObject(url: String): JSONObject? {
+        return fetchText(url)?.let(::JSONObject)
     }
 
-    private fun fetchText(url: String): String {
+    private fun fetchText(url: String): String? {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -382,6 +384,9 @@ class AppUpdateRepositoryImpl(
 
         try {
             val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_NOT_FOUND) {
+                return null
+            }
             val responseText = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()
                 ?.use { reader -> reader.readText() }

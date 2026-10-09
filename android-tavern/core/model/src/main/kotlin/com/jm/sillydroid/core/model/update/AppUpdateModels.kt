@@ -83,7 +83,8 @@ data class AppDownloadRecord(
 data class AppUpdateRequestConfig(
     val latestReleaseMetadataUrl: String,
     val buildType: String,
-    val currentVersionName: String
+    val currentVersionName: String,
+    val currentVersionCode: Long = 0L
 )
 
 data class AppUpdateBuildConfig(

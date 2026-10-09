@@ -167,11 +167,21 @@ fun quoteBuildConfigString(value: String): String {
     }
 }
 
-val androidVersionCode = resolveAndroidVersionCode(System.getenv("SILLYDROID_ANDROID_VERSION_CODE").orEmpty().trim())
+// 自用版版本号默认取 gradle.properties 的 stdroidVersionCode / stdroidVersionName，
+// filesite 按 versionCode 判断新旧，每次发布前都要递增。
+fun resolveEnvOrGradleProperty(envName: String, propertyName: String): String {
+    return System.getenv(envName).orEmpty().trim().ifBlank {
+        providers.gradleProperty(propertyName).orNull?.trim().orEmpty()
+    }
+}
+
+val androidVersionCode = resolveAndroidVersionCode(
+    resolveEnvOrGradleProperty("SILLYDROID_ANDROID_VERSION_CODE", "stdroidVersionCode")
+)
 val androidHostVersion = resolveAndroidHostVersion()
 val androidUpstreamVersion = System.getenv("SILLYDROID_ANDROID_UPSTREAM_VERSION").orEmpty().trim()
 val androidVersionName = resolveAndroidVersionName(
-    rawValue = System.getenv("SILLYDROID_ANDROID_VERSION_NAME").orEmpty().trim(),
+    rawValue = resolveEnvOrGradleProperty("SILLYDROID_ANDROID_VERSION_NAME", "stdroidVersionName"),
     hostVersion = androidHostVersion,
     upstreamVersion = androidUpstreamVersion
 )
@@ -251,12 +261,11 @@ android {
         buildConfigField("String", "SILLYDROID_HOST_VERSION", quoteBuildConfigString(androidHostVersion))
         buildConfigField("String", "SILLYDROID_UPSTREAM_VERSION", quoteBuildConfigString(androidUpstreamVersion))
         buildConfigField("String", "SILLYDROID_GITHUB_REPOSITORY", quoteBuildConfigString("jialmaster/SillyDroid"))
-        // App 内更新与官网首页共用同一份 latest JSON，避免继续扫描 GitHub Releases API
-        // 并在 release 删除 / 编辑后读到过期的 latest 语义。
+        // STDROID 自用版从 filesite 检查更新，发布流程见 /root/workspace/filesite-upload.md。
         buildConfigField(
             "String",
             "SILLYDROID_LATEST_RELEASE_METADATA_URL",
-            quoteBuildConfigString("https://sd.jlmaster.online/api/projects/sillydroid/releases/latest.json")
+            quoteBuildConfigString("https://files.biatch.party/api/version/stdroid")
         )
         buildConfigField(
             "String",
