@@ -189,44 +189,46 @@ android-tavern/app/src/main/res/drawable-anydpi-v26/ic_launcher.xml
 
 ## 常用构建和验证命令
 
-所有 Gradle 命令建议在仓库根目录执行：
+构建一律走远程构建机（`rbuild`，说明见 `/root/workspace/android-remote-build/README.md`），不要在本机跑 `./gradlew`。在仓库根目录执行：
 
 ```bash
 cd /root/workspace/SillyDroid
 ```
 
-环境变量：
-
-```bash
-export ANDROID_HOME=/root/workspace/android-sdk
-export ANDROID_SDK_ROOT=/root/workspace/android-sdk
-```
-
 设置页和相关单测：
 
 ```bash
-ANDROID_HOME=/root/workspace/android-sdk ANDROID_SDK_ROOT=/root/workspace/android-sdk \
-./gradlew --no-daemon --console=plain -p android-tavern \
+rbuild -p android-tavern \
 :feature:settings:compileDebugKotlin \
 :feature:settings:testDebugUnitTest \
 :feature:main:testDebugUnitTest \
-:data:runtime:testDebugUnitTest
+:data:runtime:testDebugUnitTest \
+:data:settings:testDebugUnitTest
 ```
 
-打 debug APK：
+日常打 debug APK（直接用工作区 assets 里现有的 rootfs / server / jniLibs，只改宿主代码时用这个）：
 
 ```bash
-ANDROID_HOME=/root/workspace/android-sdk ANDROID_SDK_ROOT=/root/workspace/android-sdk \
-./gradlew --no-daemon --console=plain -p android-tavern :app:assembleDebug
+rbuild -p android-tavern :app:assembleDebug
 ```
 
-构建完成后直接使用 Gradle 原始产物：
+产物会拉回 Gradle 原始路径，直接使用，不再额外复制或改名：
 
 ```text
 /root/workspace/SillyDroid/android-tavern/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-以后不再额外复制或改名 APK。
+完整流程（重建 rootfs、server source 等 stage 1→4，比如要换 SillyTavern 版本时）：
+
+```bash
+rbuild exec bash scripts/build-stdroid-full.sh --build-type debug                # Tavern 版本沿用当前 assets
+rbuild exec bash scripts/build-stdroid-full.sh --build-type debug --tavern-tag latest
+```
+
+- 不要直接用上游的 `scripts/build-tavern-android-local.sh`：它会按上游 release 计算 versionCode（如 1810001069），覆盖 `gradle.properties` 的 `stdroidVersionCode`，装到手机后会挡住后续版本的覆盖安装。
+- 产物：`artifacts/releases/android-apk/app-debug.apk`。stage 1/3 产物留在构建机的 `artifacts/` 里复用，`--refresh` 强制重建。
+- 完整流程打出的 APK 里的 rootfs/server 来自构建机，不会回写本机 `android-tavern/app/src/main/assets`。如果用完整流程换了 Tavern 版本，之后的日常 `:app:assembleDebug` 仍会打进本机 assets 里的旧版本。
+- rbuild 同步规则在仓库根目录 `.rbuild.env`（同步 `.git`、保留远程 `artifacts/`、拉回 APK、自动安装 binutils 等系统包）。
 
 ## Stdroid JS-Slash-Runner 导入 API
 
@@ -326,8 +328,7 @@ git log --oneline custom/st-shell..origin/master
 4. 改完后至少跑：
 
 ```bash
-ANDROID_HOME=/root/workspace/android-sdk ANDROID_SDK_ROOT=/root/workspace/android-sdk \
-./gradlew --no-daemon --console=plain -p android-tavern :app:assembleDebug
+rbuild -p android-tavern :app:assembleDebug
 ```
 
 5. APK 产物路径：
