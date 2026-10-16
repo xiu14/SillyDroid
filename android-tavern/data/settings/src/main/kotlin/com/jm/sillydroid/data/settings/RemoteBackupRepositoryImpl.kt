@@ -9,6 +9,8 @@ import com.jm.sillydroid.domain.backup.RemoteBackupList
 import com.jm.sillydroid.domain.backup.RemoteBackupRepository
 import com.jm.sillydroid.domain.backup.RemoteBackupRestoreResult
 import com.jm.sillydroid.domain.backup.RemoteBackupResult
+import com.jm.sillydroid.domain.backup.RemoteEditReloadSignal
+import com.jm.sillydroid.domain.backup.RemoteEditStatus
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -181,6 +183,46 @@ class RemoteBackupRepositoryImpl(
         return config.optString("importToken")
     }
 
+    override suspend fun remoteEditStatus(): RemoteEditStatus {
+        return parseRemoteEditStatus(request(method = "GET", path = "/remote-edit/status"))
+    }
+
+    override suspend fun pairRemoteEdit(url: String, code: String): RemoteEditStatus {
+        val body = JSONObject()
+            .put("url", url)
+            .put("code", code)
+            .put("name", "stdroid-${android.os.Build.MODEL}")
+        return parseRemoteEditStatus(
+            request(method = "POST", path = "/remote-edit/pair", body = body, readTimeoutMs = 30000)
+        )
+    }
+
+    override suspend fun unpairRemoteEdit(): RemoteEditStatus {
+        return parseRemoteEditStatus(request(method = "POST", path = "/remote-edit/unpair", body = JSONObject()))
+    }
+
+    override suspend fun waitRemoteEditReload(since: Long): RemoteEditReloadSignal {
+        val json = request(
+            method = "GET",
+            path = "/remote-edit/wait-reload?since=$since&timeoutMs=$remoteEditWaitMs",
+            readTimeoutMs = remoteEditWaitMs + 10000
+        )
+        return RemoteEditReloadSignal(
+            seq = json.optLong("seq", since),
+            active = json.optBoolean("active")
+        )
+    }
+
+    private fun parseRemoteEditStatus(json: JSONObject): RemoteEditStatus {
+        val status = json.optJSONObject("status") ?: JSONObject()
+        return RemoteEditStatus(
+            paired = status.optBoolean("paired"),
+            url = status.optString("url"),
+            state = status.optString("state"),
+            lastError = status.optString("lastError")
+        )
+    }
+
     private fun request(
         method: String,
         path: String,
@@ -244,5 +286,6 @@ class RemoteBackupRepositoryImpl(
         private const val jobPollIntervalMs = 1500L
         private const val jobTimeoutMs = 60L * 60L * 1000L
         private const val maxConsecutivePollFailures = 5
+        private const val remoteEditWaitMs = 25000
     }
 }

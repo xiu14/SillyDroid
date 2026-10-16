@@ -55,6 +55,20 @@ data class RemoteBackupConfigDraft(
     val clearR2Config: Boolean = false,
 )
 
+// 远程编辑（测试版）连接状态；state 取值：unpaired / disabled / connecting / connected / disconnected / error。
+data class RemoteEditStatus(
+    val paired: Boolean,
+    val url: String,
+    val state: String,
+    val lastError: String,
+)
+
+// active=false 表示未配对，调用方应放慢轮询。
+data class RemoteEditReloadSignal(
+    val seq: Long,
+    val active: Boolean,
+)
+
 interface RemoteBackupRepository {
     suspend fun health(): RemoteBackupHealth
     suspend fun createBackup(): RemoteBackupResult
@@ -66,4 +80,8 @@ interface RemoteBackupRepository {
     suspend fun config(): RemoteBackupConfig
     suspend fun saveConfig(draft: RemoteBackupConfigDraft)
     suspend fun resetImportToken(): String
+    suspend fun remoteEditStatus(): RemoteEditStatus
+    suspend fun pairRemoteEdit(url: String, code: String): RemoteEditStatus
+    suspend fun unpairRemoteEdit(): RemoteEditStatus
+    suspend fun waitRemoteEditReload(since: Long): RemoteEditReloadSignal
 }

@@ -15,6 +15,7 @@ const {
   signedR2Fetch,
   readR2Error
 } = require('./r2-client');
+const { createRemoteEdit } = require('./remote-edit');
 
 const APP_DIR = process.env.APP_DIR || path.resolve(__dirname);
 const CONFIG_FILE = path.join(APP_DIR, 'config.json');
@@ -1731,6 +1732,49 @@ app.post('/restart', (req, res) => {
     });
     child.unref();
   }, 500);
+});
+
+// ---- 远程编辑（测试版） ----
+const remoteEdit = createRemoteEdit({
+  getConfig,
+  saveConfig,
+  log: (message) => console.log(message),
+  logError: (message) => console.error(message)
+});
+
+app.get('/remote-edit/status', (req, res) => {
+  res.json({ ok: true, status: remoteEdit.status() });
+});
+
+app.post('/remote-edit/pair', async (req, res) => {
+  try {
+    const { url, code, name } = req.body || {};
+    if (!code) return res.status(400).json({ ok: false, error: 'pairing code required' });
+    res.json({ ok: true, status: await remoteEdit.pair(url, code, name) });
+  } catch (e) {
+    console.error('[remote-edit] pair error:', e.message);
+    res.status(e.status || 500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/remote-edit/unpair', async (req, res) => {
+  try {
+    res.json({ ok: true, status: await remoteEdit.unpair() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 宿主长轮询：since=-1 立即返回当前序号；有新的刷新请求或超时后返回。
+app.get('/remote-edit/wait-reload', async (req, res) => {
+  const since = parseInt(req.query.since ?? '-1', 10);
+  const timeoutMs = Math.min(Math.max(parseInt(req.query.timeoutMs || '25000', 10) || 25000, 1000), 55000);
+  const status = remoteEdit.status();
+  if (!status.paired && since >= 0) {
+    return res.json({ ok: true, seq: since, active: false });
+  }
+  const seq = await remoteEdit.waitReload(Number.isFinite(since) ? since : -1, timeoutMs);
+  res.json({ ok: true, seq, active: status.paired });
 });
 
 // Express 5 的 listen 回调在绑定失败时也会被调用，必须检查 error，否则端口被占用时会误报 listening。

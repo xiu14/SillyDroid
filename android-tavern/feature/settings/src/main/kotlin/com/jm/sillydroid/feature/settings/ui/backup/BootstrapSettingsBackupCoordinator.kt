@@ -26,6 +26,7 @@ import com.jm.sillydroid.domain.backup.RemoteBackupHealth
 import com.jm.sillydroid.domain.backup.RemoteBackupItem
 import com.jm.sillydroid.domain.backup.RemoteBackupList
 import com.jm.sillydroid.domain.backup.RemoteBackupRepository
+import com.jm.sillydroid.domain.backup.RemoteEditStatus
 import com.jm.sillydroid.domain.settings.TavernShellSettingsRepository
 import com.jm.sillydroid.feature.settings.R
 import com.jm.sillydroid.feature.settings.ui.applySettingsEndIconStyle
@@ -55,6 +56,7 @@ class BootstrapSettingsBackupCoordinator(
     private lateinit var refreshButton: MaterialButton
     private lateinit var r2SettingsButton: MaterialButton
     private lateinit var importTokenButton: MaterialButton
+    private lateinit var remoteEditButton: MaterialButton
     private lateinit var clearLogsButton: MaterialButton
     private lateinit var listContainer: LinearLayout
     private lateinit var emptyListView: TextView
@@ -144,6 +146,7 @@ class BootstrapSettingsBackupCoordinator(
         refreshButton.setOnClickListener { refresh(showFailure = true) }
         r2SettingsButton.setOnClickListener { showR2ConfigDialog() }
         importTokenButton.setOnClickListener { showImportTokenDialog() }
+        remoteEditButton.setOnClickListener { showRemoteEditDialog() }
         clearLogsButton.setOnClickListener { clearBackupLogs() }
     }
 
@@ -166,6 +169,7 @@ class BootstrapSettingsBackupCoordinator(
             }
         }
         importTokenButton = addActionButton(rowThree, R.string.bootstrap_settings_remote_backup_import_token, weight = 1f)
+        remoteEditButton = addActionButton(rowThree, R.string.bootstrap_settings_remote_edit_button, weight = 1f, addStartMargin = true)
     }
 
     private fun refresh(showFailure: Boolean) {
@@ -435,6 +439,135 @@ class BootstrapSettingsBackupCoordinator(
                 showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
             }
         }
+    }
+
+    private fun showRemoteEditDialog() {
+        if (busy) {
+            return
+        }
+
+        activity.lifecycleScope.launch {
+            setBusyState(true)
+            val result = withContext(dispatchers.io) {
+                runCatching { backupRepository.remoteEditStatus() }
+            }
+            setBusyState(false)
+
+            result.onSuccess(::showRemoteEditDialog)
+                .onFailure { error ->
+                    showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
+                }
+        }
+    }
+
+    private fun showRemoteEditDialog(status: RemoteEditStatus) {
+        val root = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dimen(R.dimen.sillydroid_panel_padding),
+                dimen(R.dimen.sillydroid_space_sm),
+                dimen(R.dimen.sillydroid_panel_padding),
+                0
+            )
+        }
+        root.addView(
+            TextView(activity).apply {
+                TextViewCompat.setTextAppearance(this, R.style.TextAppearance_SillyDroid_SettingsBody)
+                setTextColor(MaterialColors.getColor(activity, MaterialR.attr.colorOnSurfaceVariant, 0))
+                text = buildString {
+                    append(activity.getString(R.string.bootstrap_settings_remote_edit_summary))
+                    append("\n\n")
+                    append(activity.getString(R.string.bootstrap_settings_remote_edit_state, formatRemoteEditState(status.state)))
+                    if (status.lastError.isNotBlank()) {
+                        append("\n")
+                        append(activity.getString(R.string.bootstrap_settings_remote_edit_last_error, status.lastError.compactForMessage()))
+                    }
+                }
+            }
+        )
+        val urlInput = addDialogInput(
+            root = root,
+            hintRes = R.string.bootstrap_settings_remote_edit_url,
+            initialValue = status.url.ifBlank { DEFAULT_REMOTE_EDIT_URL },
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        )
+        val codeInput = addDialogInput(
+            root = root,
+            hintRes = R.string.bootstrap_settings_remote_edit_code,
+            initialValue = "",
+            helperRes = R.string.bootstrap_settings_remote_edit_code_helper,
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        )
+
+        val builder = MaterialAlertDialogBuilder(activity)
+            .setTitle(R.string.bootstrap_settings_remote_edit_dialog_title)
+            .setView(root)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.bootstrap_settings_remote_edit_pair, null)
+        if (status.paired) {
+            builder.setNeutralButton(R.string.bootstrap_settings_remote_edit_unpair, null)
+        }
+        val dialog = builder.create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = codeInput.text?.toString().orEmpty().trim()
+                if (code.isBlank()) {
+                    codeInput.error = activity.getString(R.string.bootstrap_settings_remote_edit_code_required)
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                pairRemoteEdit(urlInput.text?.toString().orEmpty().trim(), code)
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                dialog.dismiss()
+                unpairRemoteEdit()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun pairRemoteEdit(url: String, code: String) {
+        activity.lifecycleScope.launch {
+            setBusyState(true)
+            val result = withContext(dispatchers.io) {
+                runCatching { backupRepository.pairRemoteEdit(url, code) }
+            }
+            setBusyState(false)
+
+            result.onSuccess {
+                showMessage(activity.getString(R.string.bootstrap_settings_remote_edit_paired))
+            }.onFailure { error ->
+                showError(activity.getString(R.string.bootstrap_settings_remote_edit_pair_failed, formatFailure(error)))
+            }
+        }
+    }
+
+    private fun unpairRemoteEdit() {
+        activity.lifecycleScope.launch {
+            setBusyState(true)
+            val result = withContext(dispatchers.io) {
+                runCatching { backupRepository.unpairRemoteEdit() }
+            }
+            setBusyState(false)
+
+            result.onSuccess {
+                showMessage(activity.getString(R.string.bootstrap_settings_remote_edit_unpaired))
+            }.onFailure { error ->
+                showError(activity.getString(R.string.bootstrap_settings_remote_backup_failed, formatFailure(error)))
+            }
+        }
+    }
+
+    private fun formatRemoteEditState(state: String): String {
+        val resId = when (state) {
+            "connected" -> R.string.bootstrap_settings_remote_edit_state_connected
+            "connecting" -> R.string.bootstrap_settings_remote_edit_state_connecting
+            "disconnected" -> R.string.bootstrap_settings_remote_edit_state_disconnected
+            "error" -> R.string.bootstrap_settings_remote_edit_state_error
+            else -> R.string.bootstrap_settings_remote_edit_state_unpaired
+        }
+        return activity.getString(resId)
     }
 
     private fun showR2ConfigDialog() {
@@ -723,6 +856,7 @@ class BootstrapSettingsBackupCoordinator(
         refreshButton.isEnabled = !busy
         r2SettingsButton.isEnabled = !busy
         importTokenButton.isEnabled = !busy
+        remoteEditButton.isEnabled = !busy
         clearLogsButton.isEnabled = !busy
     }
 
@@ -925,6 +1059,11 @@ class BootstrapSettingsBackupCoordinator(
 
     private fun dimen(resId: Int): Int {
         return activity.resources.getDimensionPixelSize(resId)
+    }
+
+    private companion object {
+        // 自用中继地址，弹窗里可改。
+        const val DEFAULT_REMOTE_EDIT_URL = "https://vs.biatch.party/stdroid-relay"
     }
 
     private data class BackupState(

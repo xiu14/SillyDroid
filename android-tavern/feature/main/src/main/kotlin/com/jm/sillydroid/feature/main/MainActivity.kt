@@ -18,7 +18,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.webkit.WebViewCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.jm.sillydroid.core.model.logs.HostLogBundleUploadRequestConfig
@@ -62,6 +64,8 @@ import com.jm.sillydroid.feature.main.ui.home.webview.hardenCompatibilityHintDia
 import com.jm.sillydroid.feature.main.ui.home.webview.resolveRendererGoneAutoUploadCrashType
 import com.jm.sillydroid.feature.main.ui.home.webview.shouldAutoUploadRendererGoneBundle
 import com.jm.sillydroid.feature.main.ui.home.webview.toDiagnosticText
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -103,6 +107,7 @@ class MainActivity : AppCompatActivity() {
     private var lastWebViewStatusBarColorHex: String? = null
     private var lastWebViewNavigationBarColorHex: String? = null
     private var remoteBackupAutoInFlight = false
+    private var remoteEditReloadJob: Job? = null
     private var lastRemoteBackupAutoAttemptAt = 0L
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1120,6 +1125,37 @@ class MainActivity : AppCompatActivity() {
     private fun onBootstrapReadyMonitoring() {
         maybePromptDefaultExtensionsAfterBootstrapReady()
         maybeRunDailyRemoteBackup()
+        startRemoteEditReloadWatcher()
+    }
+
+    // 远程编辑（测试版）改完文件后由 sidecar 发出刷新请求；页面不刷新的话 ST 前端可能把旧设置写回去。
+    // 只在前台长轮询；切回前台时用上次的序号补收后台期间的刷新请求。未配对时 30 秒问一次。
+    private fun startRemoteEditReloadWatcher() {
+        if (remoteEditReloadJob?.isActive == true) {
+            return
+        }
+        val repository = appGraph.remoteBackupRepository
+        var lastSeq = -1L
+        remoteEditReloadJob = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    val signal = withContext(appGraph.dispatchers.io) {
+                        runCatching { repository.waitRemoteEditReload(lastSeq) }.getOrNull()
+                    }
+                    if (signal == null) {
+                        delay(remoteEditReloadRetryMs)
+                        continue
+                    }
+                    if (lastSeq >= 0 && signal.seq > lastSeq) {
+                        browserHost.reloadTavernUiIfPossible(processManager.currentSnapshot())
+                    }
+                    lastSeq = signal.seq
+                    if (!signal.active) {
+                        delay(remoteEditIdlePollMs)
+                    }
+                }
+            }
+        }
     }
 
     private fun maybePromptDefaultExtensionsAfterBootstrapReady() {
@@ -1199,5 +1235,7 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val TAVERN_NATIVE_BRIDGE_ID = "third-party/tavern-native-bridge"
         private const val remoteBackupAutoRetryThrottleMs = 5L * 60L * 1000L
+        private const val remoteEditReloadRetryMs = 10_000L
+        private const val remoteEditIdlePollMs = 30_000L
     }
 }
