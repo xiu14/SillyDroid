@@ -6,7 +6,7 @@ const tar = require('tar');
 const basicAuth = require('basic-auth');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { Readable } = require('stream');
+const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const {
   EMPTY_SHA256,
@@ -24,6 +24,11 @@ const SILLYDROID_EMBEDDED = process.env.SILLYDROID_EMBEDDED === '1';
 const IMPORT_BIND_HOST = '127.0.0.1';
 const IMPORT_DEFAULT_PORT = 8788;
 const IMPORT_BODY_LIMIT = process.env.ST_IMPORT_BODY_LIMIT || '5mb';
+const UPLOAD_MAX_BYTES = parseInt(process.env.ST_UPLOAD_MAX_BYTES || '', 10) || 4 * 1024 * 1024 * 1024;
+const RESTORE_SNAPSHOT_PREFIX = 'pre-restore-';
+const RESTORE_SNAPSHOT_KEEP = 2;
+const RESTORE_STAGING_MARKER = '.st-restore-staging-';
+const JOB_HISTORY_MAX = 20;
 
 function defaultDataDir() {
   return process.env.DATA_DIR ||
@@ -212,6 +217,25 @@ async function replaceFile(from, to) {
 
 function isBackupFileName(name) {
   return /\.tar\.gz$/i.test(name);
+}
+
+function isRestoreSnapshotName(name) {
+  return String(name || '').startsWith(RESTORE_SNAPSHOT_PREFIX);
+}
+
+function getRestoreSnapshotName(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: DISPLAY_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date);
+  const v = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${RESTORE_SNAPSHOT_PREFIX}${v.year}${v.month}${v.day}-${v.hour}${v.minute}${v.second}.tar.gz`;
 }
 
 function formatDateParts(date = new Date(), timeZone = DISPLAY_TIMEZONE) {
@@ -434,6 +458,8 @@ async function pruneLocalBackups(backupDir, keepName = '') {
 
   for (const file of files) {
     if (!file.isFile() || !isBackupFileName(file.name) || file.name === keepName) continue;
+    // 恢复前快照只在本地保存，由 pruneRestoreSnapshots 单独控制数量。
+    if (isRestoreSnapshotName(file.name)) continue;
     const deleted = await deleteLocalBackup(backupDir, file.name, 'auto-deleted local backup');
     if (!deleted) {
       console.error(`[backup] failed to auto-delete local backup: ${file.name}`);
@@ -585,10 +611,12 @@ function isAggregateSillyDroidEntry(entryPath) {
     normalized.startsWith('extensions/');
 }
 
+// strict 模式下 gzip/tar 截断或损坏会直接抛错，顺带完成完整性校验。
 async function listTarEntries(archivePath) {
   const entries = [];
   await tar.t({
     file: archivePath,
+    strict: true,
     onentry: (entry) => {
       const normalized = normalizeArchiveEntryPath(entry.path);
       if (normalized) entries.push(normalized);
@@ -597,7 +625,130 @@ async function listTarEntries(archivePath) {
   return entries;
 }
 
-async function resolveRestoreTargetDir(archivePath, cfg) {
+async function validateBackupArchive(archivePath) {
+  let entries;
+  try {
+    entries = await listTarEntries(archivePath);
+  } catch (error) {
+    throw httpError(400, `backup archive is damaged: ${error.message}`);
+  }
+  if (!entries.some((entry) => entry !== '.')) {
+    throw httpError(400, 'backup archive is empty');
+  }
+  return entries;
+}
+
+function archiveTopLevelNames(entries) {
+  const names = new Set();
+  for (const entry of entries) {
+    const top = entry.split('/')[0];
+    if (top && top !== '.' && top !== '..') names.add(top);
+  }
+  return Array.from(names);
+}
+
+async function lstatOrNull(target) {
+  return fsp.lstat(target).catch(() => null);
+}
+
+async function movePath(from, to) {
+  try {
+    await fsp.rename(from, to);
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    await fsp.cp(from, to, { recursive: true, force: true, verbatimSymlinks: true });
+    await fsp.rm(from, { recursive: true, force: true });
+  }
+}
+
+// 与原来直接 tar.x 到数据目录的语义保持一致：覆盖备份里有的文件，不删除备份里没有的文件。
+// 区别在于文件已经完整解压到暂存目录，这里基本只剩 rename，不会再出现解压到一半的状态。
+async function mergeDirInto(sourceDir, targetDir) {
+  await ensureDir(targetDir);
+  const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const from = path.join(sourceDir, entry.name);
+    const to = path.join(targetDir, entry.name);
+    const existing = await lstatOrNull(to);
+
+    if (entry.isDirectory()) {
+      if (existing && existing.isDirectory()) {
+        await mergeDirInto(from, to);
+        continue;
+      }
+      if (existing) await fsp.rm(to, { force: true });
+      await movePath(from, to);
+      continue;
+    }
+
+    if (existing && existing.isDirectory()) {
+      await fsp.rm(to, { recursive: true, force: true });
+    }
+    await movePath(from, to);
+  }
+}
+
+async function removeStaleRestoreStaging(targetDir) {
+  const parent = path.dirname(targetDir);
+  const prefix = `${RESTORE_STAGING_MARKER}${path.basename(targetDir)}-`;
+  const siblings = await fsp.readdir(parent).catch(() => []);
+  for (const name of siblings) {
+    if (!name.startsWith(prefix)) continue;
+    await fsp.rm(path.join(parent, name), { recursive: true, force: true }).catch((error) => {
+      console.error(`[restore] failed to remove stale staging ${name}: ${error.message}`);
+    });
+  }
+}
+
+async function pruneRestoreSnapshots(backupDir) {
+  const files = await fsp.readdir(backupDir, { withFileTypes: true }).catch(() => []);
+  const snapshots = files
+    .filter((file) => file.isFile() && isBackupFileName(file.name) && isRestoreSnapshotName(file.name))
+    .map((file) => file.name)
+    .sort()
+    .reverse();
+
+  for (const name of snapshots.slice(RESTORE_SNAPSHOT_KEEP)) {
+    await deleteLocalBackup(backupDir, name, 'pruned old pre-restore snapshot');
+  }
+}
+
+// 只打包恢复会覆盖到的顶层条目，过滤规则与日常备份一致，这样快照能完整回滚这次恢复。
+async function createRestoreSnapshot(cfg, targetDir, topLevelNames) {
+  const existing = [];
+  for (const name of topLevelNames) {
+    if (await lstatOrNull(path.join(targetDir, name))) existing.push(name);
+  }
+  if (!existing.length) return '';
+
+  await ensureDir(cfg.backupDir);
+  const name = getRestoreSnapshotName();
+  const out = path.join(cfg.backupDir, name);
+  const tempOut = `${out}.partial`;
+  const t0 = Date.now();
+
+  try {
+    await tar.c({
+      gzip: true,
+      gzipOptions: { level: 1 },
+      file: tempOut,
+      cwd: targetDir,
+      filter: (entryPath) => shouldInclude(entryPath)
+    }, existing);
+    await replaceFile(tempOut, out);
+  } catch (error) {
+    await fsp.rm(tempOut, { force: true }).catch(() => { });
+    throw new Error(`failed to create pre-restore snapshot: ${error.message}`);
+  }
+
+  const stat = await fsp.stat(out);
+  console.log(`[restore] snapshot saved name=${name} size=${(stat.size / 1048576).toFixed(2)}MB time=${Date.now() - t0}ms`);
+  await pruneRestoreSnapshots(cfg.backupDir);
+  return name;
+}
+
+async function resolveRestoreTargetDir(entries, cfg) {
   if (!SILLYDROID_EMBEDDED) return cfg.dataDir;
 
   const tavernRoot = process.env.TAVERN_DATA_ROOT || '';
@@ -605,7 +756,6 @@ async function resolveRestoreTargetDir(archivePath, cfg) {
     (tavernRoot ? path.join(tavernRoot, 'data') : cfg.dataDir);
   if (!tavernRoot) return cfg.dataDir;
 
-  const entries = await listTarEntries(archivePath);
   const hasTopLevelStData = entries.some(isStDataEntry);
   const hasAggregateLayout = entries.some(isAggregateSillyDroidEntry) &&
     entries.some((entry) => entry.startsWith('data/') || entry === 'data');
@@ -869,6 +1019,104 @@ function buildImportedScript({ filename, scriptName, displayName, content, exist
   };
 }
 
+// 备份、恢复、上传等会读写备份目录或数据目录的操作全局互斥；
+// 耗时的备份/恢复作为后台任务运行，客户端用 GET /jobs/:id 轮询，避免 HTTP 读超时误判失败。
+const jobs = new Map();
+let activeOperation = null;
+
+function busyError() {
+  return httpError(409, `another backup operation is running: ${activeOperation.type}`);
+}
+
+async function runExclusive(type, task) {
+  if (activeOperation) throw busyError();
+  activeOperation = { type, job: null };
+  try {
+    return await task();
+  } finally {
+    activeOperation = null;
+  }
+}
+
+function trimJobHistory() {
+  for (const [id, job] of jobs) {
+    if (jobs.size <= JOB_HISTORY_MAX) break;
+    if (job.state !== 'running') jobs.delete(id);
+  }
+}
+
+// reuseRunning 为 true 时，同类任务正在运行就直接复用（自动备份与手动备份撞车时共享同一次结果）。
+function startJob(type, task, { reuseRunning = false } = {}) {
+  if (activeOperation) {
+    if (reuseRunning && activeOperation.type === type && activeOperation.job) {
+      return { job: activeOperation.job, reused: true };
+    }
+    throw busyError();
+  }
+
+  const job = {
+    id: createUuid(),
+    type,
+    state: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    status: null
+  };
+  jobs.set(job.id, job);
+  trimJobHistory();
+  activeOperation = { type, job };
+
+  job.promise = (async () => {
+    try {
+      job.result = await task();
+      job.state = 'succeeded';
+    } catch (error) {
+      job.state = 'failed';
+      job.error = error && error.message || String(error);
+      job.status = error && error.status || 500;
+      console.error(`[job] ${type} failed id=${job.id}:`, error && error.stack || error);
+    } finally {
+      job.finishedAt = new Date().toISOString();
+      activeOperation = null;
+    }
+  })();
+
+  return { job, reused: false };
+}
+
+function publicJob(job) {
+  const { promise, status, ...rest } = job;
+  return rest;
+}
+
+function isAsyncRequest(req) {
+  const value = String(req.query.async || '').toLowerCase();
+  return value === '1' || value === 'true';
+}
+
+// 未带 async=1 时保持旧的同步语义（网页端仍按同步方式调用）。
+async function respondWithJob(req, res, type, task, options) {
+  let started;
+  try {
+    started = startJob(type, task, options);
+  } catch (error) {
+    return res.status(error.status || 500).json({ ok: false, error: error.message });
+  }
+
+  const { job, reused } = started;
+  if (isAsyncRequest(req)) {
+    return res.status(202).json({ ok: true, job: publicJob(job), reused });
+  }
+
+  await job.promise;
+  if (job.state === 'succeeded') {
+    return res.json({ ok: true, ...job.result });
+  }
+  return res.status(job.status || 500).json({ ok: false, error: job.error });
+}
+
 let importWriteLock = Promise.resolve();
 
 async function withImportWriteLock(task) {
@@ -1035,8 +1283,15 @@ app.get('/health', async (req, res) => {
     ok: true,
     dataDir: cfg.dataDir,
     backupDir: cfg.backupDir,
-    r2Configured: hasR2Config(cfg)
+    r2Configured: hasR2Config(cfg),
+    busy: activeOperation ? activeOperation.type : null
   });
+});
+
+app.get('/jobs/:id', (req, res) => {
+  const job = jobs.get(String(req.params.id || ''));
+  if (!job) return res.status(404).json({ ok: false, error: 'job not found' });
+  res.json({ ok: true, job: publicJob(job) });
 });
 
 app.get('/logs', (req, res) => {
@@ -1049,41 +1304,69 @@ app.delete('/logs', (req, res) => {
   res.json({ ok: true });
 });
 
+function createUploadLimiter(maxBytes, onChunk) {
+  let received = 0;
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      received += chunk.length;
+      onChunk(received);
+      if (received > maxBytes) {
+        callback(httpError(413, `upload exceeds ${maxBytes} bytes`));
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
+}
+
+// 先写 .partial，完整校验 tar.gz 后再改名，中断或损坏的上传不会变成一个"看起来正常"的备份。
 app.post('/upload', async (req, res) => {
   const cfg = getConfig();
-  const name = (req.query.name || '').toString();
-  if (!name) return res.status(400).json({ ok: false, error: 'name required' });
-
-  const safeName = path.basename(name);
-  const out = path.join(cfg.backupDir, safeName);
+  const safeName = path.basename((req.query.name || '').toString());
+  if (!safeName || !isBackupFileName(safeName) || isRestoreSnapshotName(safeName)) {
+    return res.status(400).json({ ok: false, error: 'name must be a .tar.gz backup file name' });
+  }
+  const overwrite = ['1', 'true'].includes(String(req.query.overwrite || '').toLowerCase());
+  const declaredLength = parseInt(req.headers['content-length'] || '', 10);
+  if (Number.isFinite(declaredLength) && declaredLength > UPLOAD_MAX_BYTES) {
+    return res.status(413).json({ ok: false, error: `upload exceeds ${UPLOAD_MAX_BYTES} bytes` });
+  }
 
   try {
-    await ensureDir(cfg.backupDir);
-    const writeStream = fs.createWriteStream(out);
-    req.pipe(writeStream);
+    const result = await runExclusive('upload', async () => {
+      await ensureDir(cfg.backupDir);
+      const out = path.join(cfg.backupDir, safeName);
+      if (!overwrite && await fileExists(out)) {
+        throw httpError(409, `backup already exists: ${safeName} (pass overwrite=1 to replace)`);
+      }
 
-    req.on('error', (err) => {
-      console.error('[upload] request error:', err.message);
-      writeStream.close();
+      const tempOut = `${out}.partial`;
+      let received = 0;
+      try {
+        await pipeline(
+          req,
+          createUploadLimiter(UPLOAD_MAX_BYTES, (count) => { received = count; }),
+          fs.createWriteStream(tempOut)
+        );
+        if (received === 0) throw httpError(400, 'empty upload');
+        await validateBackupArchive(tempOut);
+        await replaceFile(tempOut, out);
+      } catch (error) {
+        await fsp.rm(tempOut, { force: true }).catch(() => { });
+        throw error;
+      }
+      return { file: safeName, size: received };
     });
 
-    writeStream.on('finish', () => {
-      console.log(`[upload] received: ${safeName}`);
-      res.json({ ok: true });
-    });
-
-    writeStream.on('error', (err) => {
-      console.error(`[upload] write error: ${safeName}`, err.message);
-      res.status(500).json({ ok: false, error: err.message });
-    });
+    console.log(`[upload] received: ${safeName} size=${result.size}`);
+    res.json({ ok: true, ...result });
   } catch (e) {
-    console.error('[upload] error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
+    console.error(`[upload] error name=${safeName}:`, e.message);
+    if (!res.headersSent) res.status(e.status || 500).json({ ok: false, error: e.message });
   }
 });
 
-app.post('/backup', async (req, res) => {
-  const cfg = getConfig();
+async function performBackup(cfg) {
   const name = getDailyBackupName();
   const out = path.join(cfg.backupDir, name);
   const tempOut = `${out}.partial`;
@@ -1129,12 +1412,16 @@ app.post('/backup', async (req, res) => {
 
     await pruneLocalBackups(cfg.backupDir, keepLocalName);
 
-    res.json({ ok: true, file: name, warning: warning || undefined });
+    return { file: name, warning: warning || undefined };
   } catch (e) {
     await fsp.rm(tempOut, { force: true }).catch(() => { });
-    console.error('[backup] error:', e && e.stack || e);
-    res.status(500).json({ ok: false, error: e.message });
+    throw e;
   }
+}
+
+app.post('/backup', async (req, res) => {
+  const cfg = getConfig();
+  await respondWithJob(req, res, 'backup', () => performBackup(cfg), { reuseRunning: true });
 });
 
 app.post('/upload-r2', async (req, res) => {
@@ -1146,19 +1433,22 @@ app.post('/upload-r2', async (req, res) => {
     if (!safeName) return res.status(400).json({ ok: false, error: 'name required' });
     if (!hasR2Config(cfg)) return res.status(400).json({ ok: false, error: 'R2 not configured' });
 
-    const localFile = path.join(cfg.backupDir, safeName);
-    if (!await fileExists(localFile)) {
-      return res.status(404).json({ ok: false, error: 'local backup not found' });
-    }
+    const result = await runExclusive('upload-r2', async () => {
+      const localFile = path.join(cfg.backupDir, safeName);
+      if (!await fileExists(localFile)) {
+        throw httpError(404, 'local backup not found');
+      }
 
-    console.log(`[upload-r2] start name=${safeName}`);
-    const result = await uploadBackupToR2WithRetry(cfg, localFile, safeName, 3);
-    await pruneLocalBackups(cfg.backupDir, '');
+      console.log(`[upload-r2] start name=${safeName}`);
+      const uploaded = await uploadBackupToR2WithRetry(cfg, localFile, safeName, 3);
+      await pruneLocalBackups(cfg.backupDir, '');
+      return uploaded;
+    });
     console.log(`[upload-r2] success name=${safeName} attempts=${result.attempts}`);
     res.json({ ok: true, attempts: result.attempts });
   } catch (e) {
     console.error('[upload-r2] error:', e && e.stack || e);
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(e.status || 500).json({ ok: false, error: e.message });
   }
 });
 
@@ -1173,7 +1463,10 @@ app.get('/list', async (req, res) => {
     if (hasR2Config(cfg)) {
       try {
         remoteItems = await listR2Backups(cfg);
-        localItems = await removeUploadedLocalDuplicates(cfg.backupDir, localItems, remoteItems);
+        // 备份/恢复进行中不清理本地副本，避免删掉正在读取的文件。
+        if (!activeOperation) {
+          localItems = await removeUploadedLocalDuplicates(cfg.backupDir, localItems, remoteItems);
+        }
       } catch (err) {
         warning = err.message;
         console.error(`[list] R2 list failed: ${warning}`);
@@ -1219,47 +1512,66 @@ app.get('/download', async (req, res) => {
   }
 });
 
-app.post('/restore', async (req, res) => {
-  const cfg = getConfig();
-  const name = (req.query.name || req.body?.name || '').toString();
-  const safeName = path.basename(name);
+// 恢复流程：取包 → 完整解压到同级暂存目录（损坏的包在这一步失败，不碰现有数据）
+// → 为将被覆盖的顶层条目打恢复前快照 → 把暂存内容 rename 合并进目标目录。
+async function performRestore(cfg, safeName) {
   const localFile = path.join(cfg.backupDir, safeName);
-  const tempFile = path.join(cfg.backupDir, `.restore-${Date.now()}-${safeName}`);
+  // 临时下载文件不以 .tar.gz 结尾，避免在恢复过程中出现在备份列表里。
+  const tempFile = path.join(cfg.backupDir, `.restore-${Date.now()}-${safeName}.download`);
   const t0 = Date.now();
   let usedTempFile = false;
+  let stagingDir = '';
 
   try {
-    if (!safeName) return res.status(400).json({ ok: false, error: 'name required' });
-
     let sourceFile = localFile;
     if (!await fileExists(localFile)) {
-      if (!hasR2Config(cfg)) {
-        return res.status(404).json({ ok: false, error: 'backup not found' });
-      }
+      if (!hasR2Config(cfg)) throw httpError(404, 'backup not found');
 
       await ensureDir(cfg.backupDir);
-      const downloaded = await downloadR2BackupToFile(cfg, safeName, tempFile);
-      if (!downloaded) {
-        return res.status(404).json({ ok: false, error: 'backup not found' });
-      }
-      sourceFile = tempFile;
       usedTempFile = true;
+      const downloaded = await downloadR2BackupToFile(cfg, safeName, tempFile);
+      if (!downloaded) throw httpError(404, 'backup not found');
+      sourceFile = tempFile;
       console.log(`[restore] pulled from R2: ${safeName}`);
     }
 
-    const restoreTargetDir = await resolveRestoreTargetDir(sourceFile, cfg);
+    const entries = await validateBackupArchive(sourceFile);
+    const restoreTargetDir = await resolveRestoreTargetDir(entries, cfg);
     await ensureDir(restoreTargetDir);
-    await tar.x({ file: sourceFile, cwd: restoreTargetDir });
-    console.log(`[restore] done name=${safeName} cwd=${restoreTargetDir} time=${Date.now() - t0}ms`);
-    res.json({ ok: true, restoreTargetDir });
-  } catch (e) {
-    console.error('[restore] error:', e && e.stack || e);
-    res.status(500).json({ ok: false, error: e.message });
+    await removeStaleRestoreStaging(restoreTargetDir);
+
+    stagingDir = path.join(
+      path.dirname(restoreTargetDir),
+      `${RESTORE_STAGING_MARKER}${path.basename(restoreTargetDir)}-${Date.now()}`
+    );
+    await ensureDir(stagingDir);
+    await tar.x({ file: sourceFile, cwd: stagingDir, strict: true });
+    console.log(`[restore] staged name=${safeName} time=${Date.now() - t0}ms`);
+
+    const snapshot = await createRestoreSnapshot(cfg, restoreTargetDir, archiveTopLevelNames(entries));
+    await mergeDirInto(stagingDir, restoreTargetDir);
+
+    console.log(`[restore] done name=${safeName} cwd=${restoreTargetDir} snapshot=${snapshot || '-'} time=${Date.now() - t0}ms`);
+    return { restoreTargetDir, snapshot: snapshot || undefined };
   } finally {
+    if (stagingDir) {
+      await fsp.rm(stagingDir, { recursive: true, force: true }).catch((error) => {
+        console.error(`[restore] failed to remove staging dir: ${error.message}`);
+      });
+    }
     if (usedTempFile) {
       await fsp.rm(tempFile, { force: true }).catch(() => { });
     }
   }
+}
+
+app.post('/restore', async (req, res) => {
+  const cfg = getConfig();
+  const name = (req.query.name || req.body?.name || '').toString();
+  const safeName = path.basename(name);
+  if (!safeName) return res.status(400).json({ ok: false, error: 'name required' });
+
+  await respondWithJob(req, res, 'restore', () => performRestore(cfg, safeName));
 });
 
 app.delete('/delete', async (req, res) => {
@@ -1270,29 +1582,33 @@ app.delete('/delete', async (req, res) => {
     if (!name) return res.status(400).json({ ok: false, error: 'name required' });
 
     const safeName = path.basename(name);
-    const localFile = path.join(cfg.backupDir, safeName);
-    let deletedLocal = false;
-    let deletedRemote = false;
+    const result = await runExclusive('delete', async () => {
+      const localFile = path.join(cfg.backupDir, safeName);
+      let deletedLocal = false;
+      let deletedRemote = false;
 
-    if (await fileExists(localFile)) {
-      await fsp.unlink(localFile);
-      deletedLocal = true;
-    }
+      if (await fileExists(localFile)) {
+        await fsp.unlink(localFile);
+        deletedLocal = true;
+      }
 
-    if (hasR2Config(cfg)) {
-      await deleteR2Backup(cfg, safeName);
-      deletedRemote = true;
-    }
+      // 恢复前快照只存在本地，不去 R2 删同名对象。
+      if (hasR2Config(cfg) && !isRestoreSnapshotName(safeName)) {
+        await deleteR2Backup(cfg, safeName);
+        deletedRemote = true;
+      }
 
-    if (!deletedLocal && !deletedRemote) {
-      return res.status(404).json({ ok: false, error: 'backup not found' });
-    }
+      if (!deletedLocal && !deletedRemote) {
+        throw httpError(404, 'backup not found');
+      }
+      return { local: deletedLocal, remote: deletedRemote };
+    });
 
-    console.log(`[delete] done name=${safeName} local=${deletedLocal} remote=${deletedRemote}`);
-    res.json({ ok: true, local: deletedLocal, remote: deletedRemote });
+    console.log(`[delete] done name=${safeName} local=${result.local} remote=${result.remote}`);
+    res.json({ ok: true, ...result });
   } catch (e) {
     console.error('[delete] error:', e && e.stack || e);
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(e.status || 500).json({ ok: false, error: e.message });
   }
 });
 
@@ -1417,10 +1733,20 @@ app.post('/restart', (req, res) => {
   }, 500);
 });
 
-app.listen(PORT, BIND_HOST, () => {
+// Express 5 的 listen 回调在绑定失败时也会被调用，必须检查 error，否则端口被占用时会误报 listening。
+// 备份端口失败直接退出；导入端口失败只记日志，不连累备份功能。
+app.listen(PORT, BIND_HOST, (error) => {
+  if (error) {
+    console.error(`[st-remote-backup] failed to listen on ${BIND_HOST}:${PORT}: ${error.message}`);
+    process.exit(1);
+  }
   console.log(`[st-remote-backup] listening on ${BIND_HOST}:${PORT}, DATA_DIR=${startupConfig.dataDir}, BACKUP_DIR=${startupConfig.backupDir}`);
 });
 
-createImportApp().listen(JS_IMPORT_PORT, JS_IMPORT_BIND_HOST, () => {
+createImportApp().listen(JS_IMPORT_PORT, JS_IMPORT_BIND_HOST, (error) => {
+  if (error) {
+    console.error(`[st-js-import] failed to listen on ${JS_IMPORT_BIND_HOST}:${JS_IMPORT_PORT}: ${error.message}`);
+    return;
+  }
   console.log(`[st-js-import] listening on ${JS_IMPORT_BIND_HOST}:${JS_IMPORT_PORT}, DATA_DIR=${startupConfig.dataDir}`);
 });
