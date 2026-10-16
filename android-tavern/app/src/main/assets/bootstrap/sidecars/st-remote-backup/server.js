@@ -8,11 +8,17 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
+const {
+  EMPTY_SHA256,
+  normalizeR2Prefix,
+  hasR2Config,
+  signedR2Fetch,
+  readR2Error
+} = require('./r2-client');
 
 const APP_DIR = process.env.APP_DIR || path.resolve(__dirname);
 const CONFIG_FILE = path.join(APP_DIR, 'config.json');
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
-const EMPTY_SHA256 = crypto.createHash('sha256').update('').digest('hex');
 const SILLYDROID_EMBEDDED = process.env.SILLYDROID_EMBEDDED === '1';
 const IMPORT_BIND_HOST = '127.0.0.1';
 const IMPORT_DEFAULT_PORT = 8788;
@@ -161,55 +167,9 @@ function getDailyBackupName(date = new Date()) {
   return `st-data-${year}-${month}-${day}.tar.gz`;
 }
 
-function normalizeR2Prefix(prefix) {
-  return (prefix || '').trim().replace(/^\/+|\/+$/g, '');
-}
-
-function getR2Endpoint(cfg) {
-  if (!cfg.r2AccountId) return '';
-  return `https://${cfg.r2AccountId}.r2.cloudflarestorage.com`;
-}
-
-function hasR2Config(cfg) {
-  return !!(cfg.r2AccountId && cfg.r2Bucket && cfg.r2AccessKeyId && cfg.r2SecretAccessKey);
-}
-
 function getBackupObjectKey(name, cfg) {
   const prefix = normalizeR2Prefix(cfg.r2Prefix);
   return prefix ? `${prefix}/${name}` : name;
-}
-
-function encodeRfc3986(value) {
-  return encodeURIComponent(value).replace(/[!*'()]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
-function encodeS3Path(key) {
-  if (!key) return '';
-  return key.split('/').map(encodeRfc3986).join('/');
-}
-
-function buildCanonicalQuery(query = {}) {
-  return Object.entries(query)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => [encodeRfc3986(String(key)), encodeRfc3986(String(value))])
-    .sort(([aKey, aValue], [bKey, bValue]) => {
-      if (aKey === bKey) return aValue.localeCompare(bValue);
-      return aKey.localeCompare(bKey);
-    })
-    .map(([key, value]) => `${key}=${value}`)
-    .join('&');
-}
-
-function buildAmzDate(date = new Date()) {
-  return date.toISOString().replace(/[:-]|\.\d{3}/g, '');
-}
-
-function hmac(key, value, encoding) {
-  return crypto.createHmac('sha256', key).update(value, 'utf8').digest(encoding);
-}
-
-function sha256Hex(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 async function sha256File(filePath) {
@@ -219,79 +179,6 @@ async function sha256File(filePath) {
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('error', reject);
     stream.on('end', () => resolve(hash.digest('hex')));
-  });
-}
-
-function getSigningKey(secret, dateStamp, region, service) {
-  const kDate = hmac(`AWS4${secret}`, dateStamp);
-  const kRegion = hmac(kDate, region);
-  const kService = hmac(kRegion, service);
-  return hmac(kService, 'aws4_request');
-}
-
-async function signedR2Fetch(cfg, method, objectKey = '', options = {}) {
-  if (!hasR2Config(cfg)) {
-    throw new Error('R2 config is incomplete');
-  }
-
-  const endpoint = new URL(getR2Endpoint(cfg));
-  const canonicalUri = objectKey
-    ? `/${encodeRfc3986(cfg.r2Bucket)}/${encodeS3Path(objectKey)}`
-    : `/${encodeRfc3986(cfg.r2Bucket)}`;
-  const canonicalQuery = buildCanonicalQuery(options.query);
-  const requestUrl = `${endpoint.origin}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ''}`;
-
-  const now = new Date();
-  const amzDate = buildAmzDate(now);
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = options.payloadHash || EMPTY_SHA256;
-
-  const headers = {};
-  const inputHeaders = options.headers || {};
-  for (const [key, value] of Object.entries(inputHeaders)) {
-    if (value !== undefined && value !== null && value !== '') {
-      headers[key.toLowerCase()] = String(value);
-    }
-  }
-
-  headers.host = endpoint.host;
-  headers['x-amz-content-sha256'] = payloadHash;
-  headers['x-amz-date'] = amzDate;
-
-  const signedHeaderKeys = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderKeys
-    .map((key) => `${key}:${headers[key].trim().replace(/\s+/g, ' ')}`)
-    .join('\n') + '\n';
-  const signedHeaders = signedHeaderKeys.join(';');
-
-  const canonicalRequest = [
-    method.toUpperCase(),
-    canonicalUri,
-    canonicalQuery,
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash
-  ].join('\n');
-
-  const credentialScope = `${dateStamp}/${cfg.r2Region}/s3/aws4_request`;
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    credentialScope,
-    sha256Hex(canonicalRequest)
-  ].join('\n');
-
-  const signingKey = getSigningKey(cfg.r2SecretAccessKey, dateStamp, cfg.r2Region, 's3');
-  const signature = hmac(signingKey, stringToSign, 'hex');
-
-  headers.authorization =
-    `AWS4-HMAC-SHA256 Credential=${cfg.r2AccessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  return fetch(requestUrl, {
-    method,
-    headers,
-    body: options.body,
-    duplex: options.duplex
   });
 }
 
@@ -326,12 +213,6 @@ function parseListBucketResult(xml) {
     isTruncated: readXmlTag(xml, 'IsTruncated') === 'true',
     nextContinuationToken: readXmlTag(xml, 'NextContinuationToken')
   };
-}
-
-async function readR2Error(action, response) {
-  const body = await response.text().catch(() => '');
-  const msg = body.replace(/\s+/g, ' ').trim().slice(0, 300);
-  return new Error(`[r2] ${action} failed (${response.status}): ${msg || response.statusText}`);
 }
 
 async function listR2Backups(cfg) {
