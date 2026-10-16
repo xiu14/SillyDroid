@@ -18,6 +18,7 @@ const {
 
 const APP_DIR = process.env.APP_DIR || path.resolve(__dirname);
 const CONFIG_FILE = path.join(APP_DIR, 'config.json');
+const CONFIG_BACKUP_FILE = `${CONFIG_FILE}.bak`;
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
 const SILLYDROID_EMBEDDED = process.env.SILLYDROID_EMBEDDED === '1';
 const IMPORT_BIND_HOST = '127.0.0.1';
@@ -53,8 +54,7 @@ function ensureImportToken(cfg) {
 
   const withToken = { ...cfg, importToken: generateImportToken() };
   try {
-    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(withToken, null, 2), 'utf8');
+    writeConfigFileSync(withToken);
   } catch (error) {
     console.error('[config] Failed to persist import token:', error.message);
   }
@@ -96,21 +96,88 @@ function loadConfig() {
     r2Region: process.env.R2_REGION || 'auto'
   };
 
-  try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      return ensureImportToken(normalizeEmbeddedConfig({ ...defaults, ...data }));
-    }
-  } catch (e) {
-    console.error('[config] Failed to load config.json:', e.message);
+  const data = readConfigFileWithRecovery();
+  if (data) {
+    return ensureImportToken(normalizeEmbeddedConfig({ ...defaults, ...data }));
   }
 
   return ensureImportToken(normalizeEmbeddedConfig(defaults));
 }
 
+function readJsonObjectFileSync(file) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('config root must be a JSON object');
+  }
+  return parsed;
+}
+
+// config.json 里有 R2 密钥和导入 token：解析失败时绝不能直接回退默认值再写回，
+// 否则一次断电截断就会永久丢配置。坏文件改名留证，再尝试上一份完好的 .bak。
+function readConfigFileWithRecovery() {
+  if (!fs.existsSync(CONFIG_FILE)) {
+    return null;
+  }
+
+  try {
+    return readJsonObjectFileSync(CONFIG_FILE);
+  } catch (error) {
+    console.error(`[config] config.json is unreadable: ${error.message}`);
+  }
+
+  const corruptFile = `${CONFIG_FILE}.corrupt-${timestampForFile()}`;
+  try {
+    fs.renameSync(CONFIG_FILE, corruptFile);
+    console.error(`[config] moved unreadable config to ${path.basename(corruptFile)}`);
+  } catch (error) {
+    console.error(`[config] failed to preserve unreadable config: ${error.message}`);
+  }
+
+  if (!fs.existsSync(CONFIG_BACKUP_FILE)) {
+    return null;
+  }
+
+  try {
+    const recovered = readJsonObjectFileSync(CONFIG_BACKUP_FILE);
+    writeConfigFileSync(recovered);
+    console.error('[config] recovered config.json from config.json.bak');
+    return recovered;
+  } catch (error) {
+    console.error(`[config] config.json.bak is unreadable too: ${error.message}`);
+    return null;
+  }
+}
+
+function writeConfigFileSync(cfg) {
+  const dir = path.dirname(CONFIG_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  const temp = path.join(dir, `.tmp-${path.basename(CONFIG_FILE)}-${process.pid}-${Date.now()}`);
+  try {
+    const fd = fs.openSync(temp, 'w', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(cfg, null, 2), 'utf8');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+
+    // 只把能正常解析的旧文件留作 .bak，避免用坏文件覆盖掉最后一份好配置。
+    try {
+      readJsonObjectFileSync(CONFIG_FILE);
+      fs.copyFileSync(CONFIG_FILE, CONFIG_BACKUP_FILE);
+    } catch {
+      // 旧文件不存在或已损坏时保留现有 .bak。
+    }
+
+    fs.renameSync(temp, CONFIG_FILE);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
+}
+
 async function saveConfig(cfg) {
-  await ensureDir(path.dirname(CONFIG_FILE));
-  await fsp.writeFile(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8');
+  writeConfigFileSync(cfg);
 }
 
 function getConfig() {
