@@ -13,6 +13,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 class RemoteBackupRepositoryImpl(
@@ -28,7 +29,7 @@ class RemoteBackupRepositoryImpl(
     }
 
     override suspend fun createBackup(): RemoteBackupResult {
-        val json = request(method = "POST", path = "/backup", readTimeoutMs = longOperationTimeoutMs)
+        val json = runJob(method = "POST", path = "/backup?async=1")
         return RemoteBackupResult(
             fileName = json.optString("file"),
             warning = json.optString("warning")
@@ -62,15 +63,57 @@ class RemoteBackupRepositoryImpl(
     }
 
     override suspend fun restoreBackup(name: String): RemoteBackupRestoreResult {
-        val json = request(
+        val json = runJob(
             method = "POST",
-            path = "/restore",
-            body = JSONObject().put("name", name),
-            readTimeoutMs = longOperationTimeoutMs
+            path = "/restore?async=1",
+            body = JSONObject().put("name", name)
         )
         return RemoteBackupRestoreResult(
-            restoreTargetDir = json.optString("restoreTargetDir")
+            restoreTargetDir = json.optString("restoreTargetDir"),
+            snapshotName = json.optString("snapshot")
         )
+    }
+
+    /**
+     * 备份/恢复在 sidecar 里作为后台任务运行：先提交拿到任务 id，再轮询 /jobs/{id}。
+     * 这样打包 + R2 上传耗时再长也不会因为单次 HTTP 读超时被误判失败。
+     * 如果 sidecar 是不认识 async 参数的旧版本，会直接同步返回结果，这里原样兼容。
+     */
+    private suspend fun runJob(method: String, path: String, body: JSONObject? = null): JSONObject {
+        val started = request(
+            method = method,
+            path = path,
+            body = body,
+            readTimeoutMs = longOperationTimeoutMs
+        )
+        var job = started.optJSONObject("job") ?: return started
+        val jobId = job.optString("id").ifBlank { throw IOException("remote backup job id missing") }
+        val deadline = System.currentTimeMillis() + jobTimeoutMs
+        var consecutivePollFailures = 0
+
+        while (true) {
+            when (job.optString("state")) {
+                "succeeded" -> return job.optJSONObject("result") ?: JSONObject()
+                "failed" -> throw IOException(job.optString("error").ifBlank { "remote backup job failed" })
+            }
+            if (System.currentTimeMillis() > deadline) {
+                throw IOException("remote backup job timed out after ${jobTimeoutMs / 60000} minutes")
+            }
+
+            delay(jobPollIntervalMs)
+            try {
+                job = request(method = "GET", path = "/jobs/${jobId.urlEncoded()}")
+                    .optJSONObject("job")
+                    ?: throw IOException("remote backup job status missing")
+                consecutivePollFailures = 0
+            } catch (error: IOException) {
+                // 任务不存在（sidecar 重启）或连续多次查询失败才放弃，偶发的一次超时继续等。
+                consecutivePollFailures += 1
+                if (error.message == "job not found" || consecutivePollFailures >= maxConsecutivePollFailures) {
+                    throw error
+                }
+            }
+        }
     }
 
     override suspend fun deleteBackup(name: String): RemoteBackupDeleteResult {
@@ -198,5 +241,8 @@ class RemoteBackupRepositoryImpl(
         private const val defaultConnectTimeoutMs = 5000
         private const val defaultReadTimeoutMs = 15000
         private const val longOperationTimeoutMs = 180000
+        private const val jobPollIntervalMs = 1500L
+        private const val jobTimeoutMs = 60L * 60L * 1000L
+        private const val maxConsecutivePollFailures = 5
     }
 }

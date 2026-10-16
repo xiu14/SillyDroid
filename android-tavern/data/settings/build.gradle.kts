@@ -19,6 +19,8 @@ android {
 dependencies {
     api(project(":domain"))
     implementation("org.yaml:snakeyaml:2.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }

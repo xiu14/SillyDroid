@@ -26,6 +26,8 @@ data class RemoteBackupResult(
 
 data class RemoteBackupRestoreResult(
     val restoreTargetDir: String,
+    // 恢复前自动保存的本地快照文件名；目标目录原本为空时没有快照，为空字符串。
+    val snapshotName: String = "",
 )
 
 data class RemoteBackupDeleteResult(

@@ -272,8 +272,16 @@ class BootstrapSettingsBackupCoordinator(
             }
             setBusyState(false)
 
-            result.onSuccess {
-                showMessage(activity.getString(R.string.bootstrap_settings_remote_backup_restore_success))
+            result.onSuccess { restored ->
+                val message = if (restored.snapshotName.isNotBlank()) {
+                    activity.getString(
+                        R.string.bootstrap_settings_remote_backup_restore_success_with_snapshot,
+                        restored.snapshotName
+                    )
+                } else {
+                    activity.getString(R.string.bootstrap_settings_remote_backup_restore_success)
+                }
+                showMessage(message)
                 onBootstrapRestartRequired()
             }.onFailure { error ->
                 showError(activity.getString(R.string.bootstrap_settings_remote_backup_restore_failed, formatFailure(error)))
