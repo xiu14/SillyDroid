@@ -8,8 +8,13 @@ import android.view.MenuItem
 import android.view.View
 import android.webkit.WebView
 
-/** 追加到 WebView 长按选字菜单里的一项；由当前 Activity 的宿主挂上、解绑时清空。 */
-data class SelectionMenuAction(val title: CharSequence, val onClick: () -> Unit)
+/**
+ * 追加到 WebView 长按选字菜单里的一项；由当前 Activity 的宿主挂上、解绑时清空。
+ *
+ * [onClick] 处理完后必须调用传入的 done 才会关闭菜单：Chromium 关菜单时会清掉选区，
+ * 宿主要先从页面里取到选中的文字，再让菜单关闭。
+ */
+data class SelectionMenuAction(val title: CharSequence, val onClick: (done: () -> Unit) -> Unit)
 
 /**
  * 在 Chromium 的浮动选字菜单里追加宿主自己的菜单项。
@@ -47,8 +52,14 @@ internal class SelectionMenuWebView(context: Context) : WebView(context) {
             if (item.itemId != ITEM_ID) {
                 return delegate.onActionItemClicked(mode, item)
             }
-            action.onClick()
-            mode.finish()
+            // 不能点完立刻 finish：取选区的 JS 是异步的，和 finish 触发的清选区谁先到渲染进程不确定。
+            var finished = false
+            action.onClick {
+                if (!finished) {
+                    finished = true
+                    mode.finish()
+                }
+            }
             return true
         }
 

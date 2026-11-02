@@ -1823,13 +1823,14 @@ class TavernWebViewHost(
     }
 
     /** 选字菜单「朗读」：从页面取出当前选中的文字交给宿主朗读。 */
-    private fun speakSelectedText() {
+    private fun speakSelectedText(done: () -> Unit) {
         runCatching {
             webView.evaluateJavascript(SELECTED_TEXT_SCRIPT) { value ->
+                done()
                 val text = runCatching { org.json.JSONTokener(value).nextValue() as? String }.getOrNull().orEmpty()
                 onSpeakSelectedText(text)
             }
-        }
+        }.onFailure { done() }
     }
 
     /** 读取当前文档可见性用于迁移验收；回调只记录状态，不读取消息或页面内容。 */
