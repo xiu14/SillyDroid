@@ -42,6 +42,8 @@ import com.jm.sillydroid.feature.main.R
 import com.jm.sillydroid.feature.main.diagnostics.formatTrimMemoryLevel
 import com.jm.sillydroid.feature.main.diagnostics.normalizeDiagnosticValue
 import com.jm.sillydroid.feature.main.floatingbrowser.FloatingBrowserSurfaceStore
+import com.jm.sillydroid.feature.main.floatingbrowser.SelectionMenuAction
+import com.jm.sillydroid.feature.main.floatingbrowser.SelectionMenuWebView
 import com.jm.sillydroid.feature.main.model.download.BrowserDownloadRequest
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeInstaller
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeTarget
@@ -71,6 +73,7 @@ class TavernWebViewHost(
     private val onWebViewRendererCrash: () -> Unit = {},
     private val onDocumentStartScriptUnsupported: () -> Unit = {},
     private val floatingBrowserSurfaceStore: FloatingBrowserSurfaceStore = FloatingBrowserSurfaceStore(),
+    private val onSpeakSelectedText: (String) -> Unit = {},
 ) : TavernBrowserHost {
     companion object {
         private const val LOG_TAG = "SillyDroidMain"
@@ -84,12 +87,38 @@ class TavernWebViewHost(
         private val RENDERER_EXIT_INFO_REFRESH_DELAYS_MS = longArrayOf(1_500L, 5_000L)
         // trimMemory 可能在压力期间密集触发；内存资源缓存释放需要节流，避免持续清理反而拖慢前台页面。
         private const val VOLATILE_WEBVIEW_CACHE_CLEAR_MIN_INTERVAL_MS = 30_000L
+        // 依次取：正在编辑的输入框里选中的部分、主文档选区、各 iframe 里的选区。
+        private const val SELECTED_TEXT_SCRIPT = """(() => {
+  const pick = (win) => {
+    try {
+      const el = win.document.activeElement;
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.selectionEnd > el.selectionStart) {
+        return el.value.slice(el.selectionStart, el.selectionEnd);
+      }
+      const text = String(win.getSelection ? win.getSelection() : '');
+      if (text) return text;
+      for (const frame of win.document.querySelectorAll('iframe')) {
+        const inner = pick(frame.contentWindow);
+        if (inner) return inner;
+      }
+    } catch (e) {}
+    return '';
+  };
+  return pick(window);
+})()"""
     }
 
     override val browserEngine: BrowserEngine = BrowserEngine.SYSTEM_WEBVIEW
     val webViewRefreshLayout: ViewGroup = activity.findViewById(R.id.webViewRefreshLayout)
     private val retainedWebViewSurface = floatingBrowserSurfaceStore.acquireWebView(activity, webViewRefreshLayout)
     val webView: WebView = retainedWebViewSurface.webView
+
+    init {
+        (webView as? SelectionMenuWebView)?.selectionMenuAction = SelectionMenuAction(
+            title = activity.getString(R.string.selection_speech_menu),
+            onClick = ::speakSelectedText
+        )
+    }
     override val browserContainer: View
         get() = webViewRefreshLayout
     override val browserSurface: View
@@ -416,6 +445,7 @@ class TavernWebViewHost(
         webDocumentStartScriptController = null
         httpAuthPromptController.dismissActivePrompt(reason = "webview_$reason")
         bridgeInstaller.close()
+        (webView as? SelectionMenuWebView)?.selectionMenuAction = null
         // 当前文档和进程安全通知桥继续保留；Activity client、下载桥必须及时解除。
         runCatching { webView.webChromeClient = null }
         runCatching { webView.webViewClient = android.webkit.WebViewClient() }
@@ -1790,6 +1820,16 @@ class TavernWebViewHost(
         bridgeInstaller.close()
         floatingBrowserSurfaceStore.destroyWebViewIfSame(webView)
         browserSurfaceDestroyed = true
+    }
+
+    /** 选字菜单「朗读」：从页面取出当前选中的文字交给宿主朗读。 */
+    private fun speakSelectedText() {
+        runCatching {
+            webView.evaluateJavascript(SELECTED_TEXT_SCRIPT) { value ->
+                val text = runCatching { org.json.JSONTokener(value).nextValue() as? String }.getOrNull().orEmpty()
+                onSpeakSelectedText(text)
+            }
+        }
     }
 
     /** 读取当前文档可见性用于迁移验收；回调只记录状态，不读取消息或页面内容。 */

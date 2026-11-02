@@ -103,4 +103,18 @@
     <string name="webview_outdated_dialog_message">检测到当前系统 WebView 的真实 Chromium 内核版本较低：%1$s。\n\n旧内核可能导致酒馆布局错位、主题颜色失效、毛玻璃异常或部分按钮显示不正确。\n\n建议在系统应用市场更新“系统 WebView / Android System WebView / 华为 WebView”，或更新系统浏览器后再使用。这个提示不会阻止启动，你也可以先继续使用。</string>
     <string name="webview_outdated_dialog_continue">继续启动</string>
     <string name="webview_unknown_version">未知</string>
+    <string name="selection_speech_menu">朗读</string>
+    <string name="selection_speech_playing">🔊 朗读中 · 点此停止（长按改设置）</string>
+    <string name="selection_speech_failed">朗读失败：%1$s</string>
+    <string name="selection_speech_empty">没有选中可以朗读的文字</string>
+    <string name="selection_speech_truncated">选中的文字太长，只读前 %1$d 字</string>
+    <string name="selection_speech_settings_title">朗读设置（Breeze TTS）</string>
+    <string name="selection_speech_settings_summary">长按选字后点「朗读」，用 Breeze 云端 TTS 流式播放。Key 只保存在本机 App 里，不会进入酒馆数据和备份。</string>
+    <string name="selection_speech_api_key">Breeze API Key</string>
+    <string name="selection_speech_api_key_helper">在 BreezeBlue 账号里获取</string>
+    <string name="selection_speech_api_key_saved">已保存；留空表示不修改</string>
+    <string name="selection_speech_voice_id">音色 ID（voice_id）</string>
+    <string name="selection_speech_voice_id_helper">默认是 clawd 用的克隆音色</string>
+    <string name="selection_speech_save">保存</string>
+    <string name="selection_speech_required">必填</string>
 </resources>

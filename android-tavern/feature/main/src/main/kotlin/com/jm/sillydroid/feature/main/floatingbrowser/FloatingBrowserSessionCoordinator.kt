@@ -401,7 +401,7 @@ internal class RetainedWebViewSurface internal constructor(
     private val contextWrapper: MutableContextWrapper
 ) : RetainedBrowserSurface {
     override val browserEngine: BrowserEngine = BrowserEngine.SYSTEM_WEBVIEW
-    val webView: WebView = WebView(contextWrapper).apply {
+    val webView: WebView = SelectionMenuWebView(contextWrapper).apply {
         layoutParams = matchParentLayoutParams()
     }
     override val surface: View

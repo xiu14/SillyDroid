@@ -43,6 +43,7 @@ import com.jm.sillydroid.feature.main.status.GenerationStatusController
 import com.jm.sillydroid.feature.main.status.GenerationStatusEvent
 import com.jm.sillydroid.feature.main.status.NotificationStatusPresenter
 import com.jm.sillydroid.feature.main.ui.extensions.DefaultExtensionsInstallerLauncher
+import com.jm.sillydroid.feature.main.ui.home.speech.SelectionSpeechController
 import com.jm.sillydroid.feature.main.ui.home.HomeViewModel
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeActions
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeInstaller
@@ -103,6 +104,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bootstrapOverlayHost: BootstrapOverlayHost
     private lateinit var systemBarInsetsController: SystemBarInsetsController
     private lateinit var generationStatusController: GenerationStatusController
+    // 第一次点选字菜单「朗读」时才创建，不占启动时间。
+    private val selectionSpeechLazy = lazy { SelectionSpeechController(this) }
+    private val selectionSpeech by selectionSpeechLazy
     private var lastWebViewSystemBarsColorHex: String? = null
     private var lastWebViewStatusBarColorHex: String? = null
     private var lastWebViewNavigationBarColorHex: String? = null
@@ -300,6 +304,9 @@ class MainActivity : AppCompatActivity() {
         }
         hostIo.cancelPendingFileChooser()
         hostIo.blobDownloadController.close()
+        if (selectionSpeechLazy.isInitialized()) {
+            selectionSpeech.release()
+        }
         super.onDestroy()
     }
 
@@ -656,7 +663,8 @@ class MainActivity : AppCompatActivity() {
                 uploadRendererGoneLogBundle = ::uploadRendererGoneLogBundle,
                 onWebViewRendererCrash = ::requestWebViewRendererCrashBrowserEngineHint,
                 onDocumentStartScriptUnsupported = ::requestWebViewDocumentStartUnsupportedHint,
-                floatingBrowserSurfaceStore = floatingBrowserRuntime.browserSurfaceStore
+                floatingBrowserSurfaceStore = floatingBrowserRuntime.browserSurfaceStore,
+                onSpeakSelectedText = { text -> selectionSpeech.speak(text) }
             )
         }.getOrElse { error ->
             recordDefaultHostDiagnostic(
