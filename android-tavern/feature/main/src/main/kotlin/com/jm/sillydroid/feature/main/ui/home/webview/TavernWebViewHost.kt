@@ -1026,7 +1026,7 @@ class TavernWebViewHost(
                       }
                     }
 
-                    function scheduleInitialChatScroll(context, reason) {
+                    function scheduleInitialChatScroll(context, reason, force) {
                       try {
                         var chatKey = getActiveChatKey(context);
                         if (!chatKey) {
@@ -1036,7 +1036,7 @@ class TavernWebViewHost(
                           return;
                         }
 
-                        if (window.__stNativeInitialScrollChatKey === chatKey) return;
+                        if (!force && window.__stNativeInitialScrollChatKey === chatKey) return;
 
                         window.__stNativeInitialScrollChatKey = chatKey;
                         window.__stNativeInitialScrollCancelled = false;
@@ -1085,7 +1085,8 @@ class TavernWebViewHost(
 
                       if (types.CHAT_CHANGED) {
                         context.eventSource.on(types.CHAT_CHANGED, function () {
-                          scheduleInitialChatScroll(getLatestContext(context), 'chat_changed');
+                          // 同一个聊天被重载时 chatKey 不变，也要重新补滚。
+                          scheduleInitialChatScroll(getLatestContext(context), 'chat_changed', true);
                         });
                       }
 

@@ -210,7 +210,8 @@
         }
     }
 
-    function scheduleInitialChatScroll(context, reason) {
+    // force：同一个聊天被重新渲染（reloadCurrentChat 等）时也要重新补滚，不能按 chatKey 去重。
+    function scheduleInitialChatScroll(context, reason, { force = false } = {}) {
         try {
             const chatKey = getActiveChatKey(context);
             if (!chatKey) {
@@ -220,7 +221,7 @@
                 return;
             }
 
-            if (runtime.initialScrollChatKey === chatKey) return;
+            if (!force && runtime.initialScrollChatKey === chatKey) return;
 
             runtime.initialScrollChatKey = chatKey;
             runtime.initialScrollCancelled = false;
@@ -258,9 +259,11 @@
         installInitialScrollCancelHooks();
         scheduleInitialChatScroll(context, 'attach');
 
+        // ST 只在加载/重载/关闭聊天、重新渲染整页消息后才发 CHAT_CHANGED，每次都补滚；
+        // 紧随其后的 CHAT_LOADED 属于同一次加载，仍按 chatKey 去重。
         if (eventTypes.CHAT_CHANGED) {
             context.eventSource.on(eventTypes.CHAT_CHANGED, () => {
-                scheduleInitialChatScroll(getContext() || context, 'chat_changed');
+                scheduleInitialChatScroll(getContext() || context, 'chat_changed', { force: true });
             });
         }
 
