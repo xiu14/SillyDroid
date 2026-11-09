@@ -163,6 +163,11 @@ class GenerationLiveUpdateService : Service() {
 
         buildProgressStyle(progress)?.let { builder.setStyle(it) }
 
+        // Android 12 起前台服务通知默认最多延迟 10 秒才显示；发送后马上切后台时流体云会晚好几秒才出来。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+
         val extras = Bundle().apply {
             putBoolean("android.requestPromotedOngoing", true)
         }
