@@ -168,9 +168,18 @@ cleanup_background_services() {
 
 trap 'cleanup_background_services' TERM INT HUP EXIT
 
+# 冷启动加速预加载（compile cache、惰性加载大依赖、跳过重复的 webpack 编译）只挂到 Tavern server 进程；
+# 用命令行参数而不是 NODE_OPTIONS，避免被 server 派生的 node/npm 子进程继承。
+STARTUP_PRELOAD="$BOOTSTRAP_ROOT/scripts/tavern-startup-preload.cjs"
+if [ -f "$STARTUP_PRELOAD" ]; then
+    set -- --require "$STARTUP_PRELOAD"
+else
+    set --
+fi
+
 # 监听开关与监听地址必须交由用户 config.yaml 决定，不能在宿主入口里写死；
 # 否则“启用外部访问”会被 CLI 参数覆盖，最终只能监听 127.0.0.1。
-"$NODE_BIN" server.js \
+"$NODE_BIN" "$@" server.js \
     --port "$TAVERN_PORT" \
     --browserLaunchEnabled false \
     --dataRoot "$TAVERN_DATA_ROOT/data" \
