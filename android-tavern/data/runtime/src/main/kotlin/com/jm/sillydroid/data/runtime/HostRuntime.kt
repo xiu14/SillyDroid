@@ -1848,6 +1848,8 @@ class ServerFastGitInjector(
 object HealthProbe {
     // 手机端偶发 IO/GC/WebView 初始化会拖慢本地 HTTP 响应，探活超时放宽到 10 秒避免把短暂卡顿判定为服务掉线。
     private const val readinessProbeTimeoutMillis = 10_000
+    private const val readinessProbeRoundNanos = 1_000_000_000L
+    private const val readinessProbePollIntervalMillis = 100L
 
     // watchdog/awaitReady 仅用来判断"本地 Tavern 进程是否在监听并响应 HTTP"。
     // 任何能完成 HTTP 握手的响应（含 3xx 重定向、4xx 认证挑战、5xx 服务自身错误）
@@ -1856,10 +1858,15 @@ object HealthProbe {
     suspend fun awaitReady(targetUrl: String, onAttempt: (attempt: Int, totalAttempts: Int) -> Unit = { _, _ -> }): Boolean {
         repeat(BootConfig.readinessProbeAttempts) { attempt ->
             onAttempt(attempt + 1, BootConfig.readinessProbeAttempts)
-            if (checkOnce(targetUrl)) {
-                return true
-            }
-            delay(1000)
+            // onAttempt 仍按 1 秒一轮回调（UI 的已等待秒数和进度都按轮数算）；
+            // 轮内改成短间隔探测，Node 一开始监听就能发现，不再平均白等半秒。
+            val roundDeadlineNanos = System.nanoTime() + readinessProbeRoundNanos
+            do {
+                if (checkOnce(targetUrl)) {
+                    return true
+                }
+                delay(readinessProbePollIntervalMillis)
+            } while (System.nanoTime() < roundDeadlineNanos)
         }
         return false
     }
