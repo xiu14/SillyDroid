@@ -5,6 +5,10 @@
     const MAX_ATTACH_ATTEMPTS = 60;
     const STREAMING_THROTTLE_MS = 1200;
     const INITIAL_SCROLL_DELAYS_MS = [120, 420, 900, 1600];
+    // 发送按钮已经报过「准备中」时，本轮开始生成就不再重复报，避免宿主重置计时。
+    const PENDING_DEDUPE_MS = 60 * 1000;
+    // 生成请求：chat-completions / text-completions / kobold 等后端的 /generate。
+    const GENERATE_URL_PATTERN = /\/api\/(?:backends\/[\w-]+|novelai|horde)\/generate(?:[?#]|$)/;
 
     if (typeof window === 'undefined') return;
 
@@ -12,6 +16,7 @@
         initialized: false,
         listenersAttached: false,
         pendingHooksInstalled: false,
+        fetchHookInstalled: false,
         scrollHooksInstalled: false,
         scrollCancelHooksInstalled: false,
         attempts: 0,
@@ -300,6 +305,45 @@
         runtime.lastStreamingAt = 0;
         runtime.pendingGeneration = null;
         runtime.startedEmitted = false;
+        runtime.lastPendingAt = 0;
+    }
+
+    /** 本轮生成已开始（命令处理完、正在组 prompt 和等首包）：还没报过「准备中」就补报一次。 */
+    function emitGenerationPreparing(type) {
+        const now = Date.now();
+        if (runtime.lastPendingAt && now - runtime.lastPendingAt < PENDING_DEDUPE_MS) return;
+        runtime.lastPendingAt = now;
+        emit('generation_pending', {
+            source: 'generation_after_commands',
+            type: type || 'normal',
+            at: now,
+        });
+    }
+
+    /**
+     * 生成请求的响应头到达即视为首包。ST 服务端等上游有响应才转发，网关又是读到上游首个数据块后才发响应头，
+     * 所以这里的时机就是网关记录的首包；只看响应头，不碰响应体，不影响 ST 读流。
+     */
+    function installFirstPacketHook() {
+        if (runtime.fetchHookInstalled || typeof window.fetch !== 'function') return;
+        runtime.fetchHookInstalled = true;
+
+        const originalFetch = window.fetch;
+        window.fetch = function (input, init) {
+            const promise = originalFetch.apply(this, arguments);
+            try {
+                const url = typeof input === 'string' ? input : input?.url || String(input || '');
+                if (!GENERATE_URL_PATTERN.test(url) || !runtime.isGenerating || runtime.startedEmitted) return promise;
+                promise.then((response) => {
+                    if (!response?.ok || !runtime.isGenerating) return;
+                    const pending = runtime.pendingGeneration || {};
+                    emitGenerationStarted(pending.type, pending.params, 'first_packet');
+                }, () => {});
+            } catch (error) {
+                console.warn(`[${MODULE_NAME}] first packet hook failed`, error);
+            }
+            return promise;
+        };
     }
 
     function emitGenerationStarted(type, params, reason) {
@@ -333,9 +377,12 @@
         });
 
         if (eventTypes.GENERATION_AFTER_COMMANDS) {
+            // 这时还在组 prompt、等首包，只算「准备中」；「在想了」等首包（见 installFirstPacketHook）。
             context.eventSource.on(eventTypes.GENERATION_AFTER_COMMANDS, (type, params, dryRun) => {
                 if (dryRun) return;
-                emitGenerationStarted(type, params, 'generation_after_commands');
+                runtime.isGenerating = true;
+                runtime.pendingGeneration = { type: type || 'normal', params: params || null };
+                emitGenerationPreparing(type);
             });
         }
 
@@ -387,6 +434,7 @@
     function attach() {
         try {
             installPendingHooks();
+            installFirstPacketHook();
 
             const context = getContext();
             const eventTypes = getEventTypes(context);

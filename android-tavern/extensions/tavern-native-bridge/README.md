@@ -13,16 +13,25 @@ in-app foreground pill.
 0.1.3
 ```
 
-`generation_started` is emitted after SillyTavern's
-`GENERATION_AFTER_COMMANDS` event, so slash commands that interrupt generation
-do not incorrectly show "thinking" in Tavern.
+Status timeline:
 
-`generation_pending` is scheduled after the send-button input event returns, so
-the Android bridge does not block SillyTavern from inserting the user message.
+- `generation_pending` ("preparing"): scheduled after the send-button input
+  event returns, so the Android bridge does not block SillyTavern from
+  inserting the user message. Also emitted on `GENERATION_AFTER_COMMANDS` for
+  swipes / regenerations / continues, unless the send button already reported
+  it for this round.
+- `generation_started` ("thinking"): emitted when the response headers of the
+  `/api/.../generate` request arrive, i.e. the first packet. SillyTavern's
+  server forwards the upstream response only after the upstream answers, and
+  the llm-gateway sends headers only after the first upstream chunk. The first
+  `STREAM_TOKEN_RECEIVED` is a fallback. Slash commands that interrupt
+  generation never reach this point.
+- `generation_content_started` ("writing"): the streamed text contains a
+  `<content>` tag.
 
-The chat view is scrolled to the latest message only once when the active chat
-changes. Manual navigation such as `/chat-jump` cancels any pending initial
-scroll attempts.
+The chat view is scrolled to the latest message every time SillyTavern renders
+a chat (`CHAT_CHANGED`, including reloading the same chat). Manual navigation
+such as `/chat-jump` or touching the page cancels any pending scroll attempts.
 
 ## Install
 
