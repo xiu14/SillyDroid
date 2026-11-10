@@ -257,6 +257,7 @@ class BootstrapSessionManager(
             )
         }
 
+        var rootfsRuntimeProvisioner: RootfsRuntimeProvisioner? = null
         try {
             val paths = HostPaths.from(appContext)
             val extractor = AssetExtractor(appContext)
@@ -487,8 +488,10 @@ class BootstrapSessionManager(
                 statusMessage = "正在初始化离线 Linux 运行时。",
                 statusDetails = "首次启动时这里可能需要几十秒，请稍等。"
             )
-            val rootfsRuntime = RootfsRuntimeProvisioner(launcher, paths).ensure(
+            val rootfsRuntime = RootfsRuntimeProvisioner(launcher, paths).also { rootfsRuntimeProvisioner = it }.ensure(
                 logFileName = runtimeLogs.currentRootfsRuntimeLogFileName(),
+                // 手动重试和服务崩溃后的自动重启都重新完整校验，不沿用上次的结论。
+                forceVerify = forceRestart,
                 onAttemptLog = ::appendStartupLog
             ) { elapsedSeconds ->
                 val progressPercent = (15 + elapsedSeconds * 8).coerceAtMost(95)
@@ -502,7 +505,11 @@ class BootstrapSessionManager(
                 stepId = BootstrapStepId.ENSURE_ROOTFS_RUNTIME,
                 detection = BootstrapStepDetection.REQUIRED,
                 result = BootstrapStepResult.SUCCESS,
-                details = "离线 Linux 运行时校验完成。"
+                details = if (rootfsRuntime.verificationSkipped) {
+                    "离线 Linux 运行时未变化，沿用上次校验结果。"
+                } else {
+                    "离线 Linux 运行时校验完成。"
+                }
             )
 
             startStep(
@@ -590,6 +597,7 @@ class BootstrapSessionManager(
         } catch (exception: BootstrapException) {
             appendStartupLog("BootstrapException: ${exception.message ?: exception.javaClass.simpleName}")
             appendStartupLog(formatThrowable(exception))
+            rootfsRuntimeProvisioner?.invalidateVerification()
             stopReadyWatchdog(reason = "bootstrap attempt failed with classified error")
             val classification = classifyBootstrapError(exception)
             failCurrentStep(
@@ -602,6 +610,7 @@ class BootstrapSessionManager(
         } catch (exception: Exception) {
             appendStartupLog("Exception: ${exception.message ?: exception.javaClass.simpleName}")
             appendStartupLog(formatThrowable(exception))
+            rootfsRuntimeProvisioner?.invalidateVerification()
             stopReadyWatchdog(reason = "bootstrap attempt failed with unexpected error")
             failCurrentStep(
                 blocked = false,

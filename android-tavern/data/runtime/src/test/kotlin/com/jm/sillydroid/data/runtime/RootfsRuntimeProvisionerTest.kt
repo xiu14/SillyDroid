@@ -6,6 +6,7 @@ import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,6 +33,61 @@ class RootfsRuntimeProvisionerTest {
             assertEquals(1, launcher.requests.size)
             assertTrue(launcher.requests.single().environment.isEmpty())
             assertTrue(startupLines.any { line -> line.contains("runtimeMode=termux-host") && line.contains("exitCode=0") })
+        } finally {
+            rootDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `ensure skips precheck while runtime is unchanged and reruns when it changes`() {
+        val rootDirectory = createTempTestDirectory(prefix = "rootfs-runtime-skip")
+        try {
+            val paths = createRootfsTestHostPaths(rootDirectory)
+            File(paths.rootfsDir, "rootfs-manifest.json").writeText("""{"runtimeMode":"termux-host"}""")
+            val launcher = RecordingLinuxRuntimeLauncher(paths) { _, _ -> FakeProcess(exitCode = 0) }
+            val provisioner = RootfsRuntimeProvisioner(launcher, paths)
+
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            val startupLines = mutableListOf<String>()
+            val skipped = provisioner.ensure(logFileName = "rootfs-runtime.log", onAttemptLog = startupLines::add)
+
+            assertTrue(skipped.verificationSkipped)
+            assertEquals("termux-host", skipped.runtimeMode)
+            assertEquals(1, launcher.requests.size)
+            assertTrue(startupLines.any { line -> line.contains("verification skipped") })
+
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log", forceVerify = true).verificationSkipped)
+            assertEquals(2, launcher.requests.size)
+
+            // 覆盖安装后 node 二进制变了，必须重新校验。
+            paths.hostTermuxNodeBinary.writeText("node-from-new-apk")
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(3, launcher.requests.size)
+
+            provisioner.invalidateVerification()
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(4, launcher.requests.size)
+        } finally {
+            rootDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `failed precheck is not remembered as verified`() {
+        val rootDirectory = createTempTestDirectory(prefix = "rootfs-runtime-failed-stamp")
+        try {
+            val paths = createRootfsTestHostPaths(rootDirectory)
+            var exitCode = 0
+            val launcher = RecordingLinuxRuntimeLauncher(paths) { _, _ -> FakeProcess(exitCode = exitCode) }
+            val provisioner = RootfsRuntimeProvisioner(launcher, paths)
+
+            provisioner.ensure(logFileName = "rootfs-runtime.log")
+            exitCode = 1
+            assertTrue(runCatching { provisioner.ensure(logFileName = "rootfs-runtime.log", forceVerify = true) }.isFailure)
+            exitCode = 0
+
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(3, launcher.requests.size)
         } finally {
             rootDirectory.deleteRecursively()
         }

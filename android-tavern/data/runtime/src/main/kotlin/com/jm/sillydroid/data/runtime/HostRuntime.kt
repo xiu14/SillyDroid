@@ -57,6 +57,8 @@ private val executableHostRuntimeFileNames = listOf(
     "libtermux-bash.so"
 )
 private const val forcePackageHostRuntimeMarkerFileName = ".force-package-host-runtime"
+private const val hostAssetSyncStampFileName = ".host-asset-sync-stamp"
+private const val rootfsRuntimeVerifiedStampFileName = ".rootfs-runtime-verified-stamp"
 
 internal fun isHostRuntimeDirectoryReady(hostLibDir: File): Boolean {
     val requiredFilesReady = hostLibDir.containsNamedFiles(requiredHostRuntimeFileNames)
@@ -465,6 +467,17 @@ class AssetExtractor(private val context: Context) {
         onProgress: (details: String, progressPercent: Int) -> Unit = { _, _ -> }
     ) = synchronized(extractLock) {
         paths.ensureWorkingDirectories()
+        // 每次冷启动都会走到这里。APK 没换、脚本和已安装的 host 扩展也没被动过时沿用上次的同步结果，
+        // 否则每次都要重写近千个文件（sidecar 的 node_modules 占大头），白花约半秒。
+        val syncStampFile = File(paths.bootstrapRoot, hostAssetSyncStampFileName)
+        val apkIdentity = currentApkIdentity()
+        if (apkIdentity != null && readHostAssetSyncStamp(syncStampFile) == buildHostAssetSyncStamp(apkIdentity, paths)) {
+            onProgress("APK 未更新，沿用已同步的 bootstrap 脚本与 host 扩展。", 100)
+            return@synchronized
+        }
+        // 先作废旧标记：同步中途进程被杀时，下次启动必须重新完整同步。
+        syncStampFile.delete()
+
         val skippedAssetRoots = mutableSetOf(
             "${BootConfig.bootstrapAssetRoot}/rootfs",
             "${BootConfig.bootstrapAssetRoot}/server"
@@ -474,7 +487,50 @@ class AssetExtractor(private val context: Context) {
         onProgress("正在把 APK 内置的 host 扩展安装到用户 extensions 目录。", 80)
         // 即使本地 Tavern 服务已经在运行，APK 升级后的 host 扩展也必须覆盖到数据目录，否则 Web 会继续服务旧 JS/CSS。
         installBundledHostExtensions(paths, replaceExisting = true)
+        if (apkIdentity != null) {
+            runCatching { syncStampFile.writeText(buildHostAssetSyncStamp(apkIdentity, paths)) }
+        }
         onProgress("host 扩展资产已同步完成。", 100)
+    }
+
+    private fun currentApkIdentity(): String? {
+        // 覆盖安装都会刷新 lastUpdateTime，versionCode 不变的 debug 包重装也能识别出来。
+        return runCatching {
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            "${packageInfo.longVersionCode}:${packageInfo.lastUpdateTime}"
+        }.getOrNull()
+    }
+
+    private fun readHostAssetSyncStamp(stampFile: File): String? {
+        return runCatching { stampFile.takeIf { it.isFile }?.readText() }.getOrNull()
+    }
+
+    private fun buildHostAssetSyncStamp(apkIdentity: String, paths: HostPaths): String {
+        // 备份恢复、远程编辑、扩展管理都可能改动 data 下已安装的 host 扩展；
+        // 把文件清单（大小 + 修改时间）记进标记里，被动过就会对不上，从而触发重新覆盖。
+        val targetExtensionsRoot = File(paths.serverDataDir, "extensions")
+        val fingerprintedDirectories = listOf(paths.scriptsDir, File(paths.bootstrapRoot, "bundled-extensions")) +
+            bundledHostExtensionDirectories(paths).map { sourceDirectory -> File(targetExtensionsRoot, sourceDirectory.name) }
+        return buildString {
+            append("v1\n")
+            append(apkIdentity).append('\n')
+            fingerprintedDirectories.forEach { directory ->
+                append(directory.absolutePath).append('\n')
+                append(directoryFingerprint(directory)).append('\n')
+            }
+        }
+    }
+
+    private fun directoryFingerprint(directory: File): String {
+        if (!Files.isDirectory(directory.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            return "<missing>"
+        }
+
+        return directory.walkTopDown()
+            .filter { it.isFile }
+            .map { file -> "${file.relativeTo(directory).path}:${file.length()}:${file.lastModified()}" }
+            .sorted()
+            .joinToString("\n")
     }
 
     fun inspectRootfsAssets(paths: HostPaths): AssetPreparationInspection {
@@ -1237,16 +1293,8 @@ class AssetExtractor(private val context: Context) {
         }
     }
 
-    private fun installBundledHostExtensions(paths: HostPaths, replaceExisting: Boolean) {
-        val bundledExtensionsRoot = File(paths.bootstrapRoot, "bundled-extensions")
-        if (!bundledExtensionsRoot.isDirectory) {
-            return
-        }
-
-        val targetExtensionsRoot = File(paths.serverDataDir, "extensions")
-        targetExtensionsRoot.mkdirs()
-
-        bundledExtensionsRoot.listFiles()
+    private fun bundledHostExtensionDirectories(paths: HostPaths): List<File> {
+        return File(paths.bootstrapRoot, "bundled-extensions").listFiles()
             .orEmpty()
             .filter { it.isDirectory }
             .filter { sourceDirectory ->
@@ -1259,6 +1307,19 @@ class AssetExtractor(private val context: Context) {
                     JSONObject(manifestFile.readText()).optString("sillydroid_bundle_category")
                 }.getOrNull().equals("host", ignoreCase = true)
             }
+            .sortedBy { it.name }
+    }
+
+    private fun installBundledHostExtensions(paths: HostPaths, replaceExisting: Boolean) {
+        val bundledExtensionsRoot = File(paths.bootstrapRoot, "bundled-extensions")
+        if (!bundledExtensionsRoot.isDirectory) {
+            return
+        }
+
+        val targetExtensionsRoot = File(paths.serverDataDir, "extensions")
+        targetExtensionsRoot.mkdirs()
+
+        bundledHostExtensionDirectories(paths)
             .forEach { sourceDirectory ->
                 val targetDirectory = File(targetExtensionsRoot, sourceDirectory.name)
                 if (targetDirectory.existsWithoutFollowingSymlinks() && !replaceExisting) {
@@ -1609,10 +1670,23 @@ class RootfsRuntimeProvisioner(
 ) {
     fun ensure(
         logFileName: String,
+        forceVerify: Boolean = false,
         onAttemptLog: (String) -> Unit = {},
         onHeartbeat: (elapsedSeconds: Int) -> Unit = {}
     ): RootfsRuntimeEnsureResult {
         val runtimeMode = readInstalledRuntimeMode(paths)
+        // 校验脚本只是把 node/git/curl/sh 各拉起来一遍确认能执行，每次冷启动要花约半秒。
+        // 这些二进制和 rootfs 没变、系统也没升级时，上次校验通过的结论仍然成立，直接沿用。
+        val verifiedStamp = buildVerifiedStamp(runtimeMode)
+        if (!forceVerify && readVerifiedStamp() == verifiedStamp) {
+            onAttemptLog("rootfs-runtime verification skipped: runtime unchanged since last successful check, runtimeMode=$runtimeMode.")
+            return RootfsRuntimeEnsureResult(
+                runtimeMode = runtimeMode,
+                verificationSkipped = true
+            )
+        }
+
+        invalidateVerification()
         val attempt = runAttempt(
             logFileName = logFileName,
             onHeartbeat = onHeartbeat
@@ -1620,12 +1694,46 @@ class RootfsRuntimeProvisioner(
         onAttemptLog(attempt.toStartupLogLine(runtimeMode))
         if (attempt.succeeded) {
             onAttemptLog("rootfs-runtime selected runtimeMode=$runtimeMode for this bootstrap session.")
+            runCatching { verifiedStampFile.writeText(verifiedStamp) }
             return RootfsRuntimeEnsureResult(
                 runtimeMode = runtimeMode
             )
         }
 
         throw IllegalStateException(buildRootfsRuntimeFailureMessage(attempt, runtimeMode))
+    }
+
+    /** 启动失败时调用：下次启动重新完整校验，不能让一次过期的“已校验”结论一直跳过排查入口。 */
+    fun invalidateVerification() {
+        verifiedStampFile.delete()
+    }
+
+    private val verifiedStampFile: File
+        get() = File(paths.rootfsDir, rootfsRuntimeVerifiedStampFileName)
+
+    private fun readVerifiedStamp(): String? {
+        return runCatching { verifiedStampFile.takeIf { it.isFile }?.readText() }.getOrNull()
+    }
+
+    private fun buildVerifiedStamp(runtimeMode: String): String {
+        val checkedFiles = listOf(
+            paths.hostTermuxNodeBinary,
+            paths.hostTermuxGitBinary,
+            paths.hostTermuxGitRemoteHttpBinary,
+            paths.hostTermuxCurlBinary,
+            paths.hostTermuxShellBinary,
+            File(paths.rootfsDir, "rootfs-manifest.json")
+        )
+        return buildString {
+            append("v1\n")
+            append(runtimeMode).append('\n')
+            // 系统升级可能改变 native exec 的行为（SELinux、linker），升级后要重新校验一次。
+            append(Build.FINGERPRINT.orEmpty()).append('\n')
+            checkedFiles.forEach { file ->
+                // 安装目录路径每次覆盖安装都会变，路径本身就能区分不同的 APK 安装。
+                append(file.absolutePath).append(':').append(file.length()).append(':').append(file.lastModified()).append('\n')
+            }
+        }
     }
 
     private fun runAttempt(
@@ -1691,7 +1799,8 @@ class RootfsRuntimeProvisioner(
 }
 
 data class RootfsRuntimeEnsureResult(
-    val runtimeMode: String = runtimeModeTermuxHost
+    val runtimeMode: String = runtimeModeTermuxHost,
+    val verificationSkipped: Boolean = false
 )
 
 data class RootfsRuntimeAttemptResult(
