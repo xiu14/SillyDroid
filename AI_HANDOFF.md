@@ -143,6 +143,24 @@ android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settin
 
 聊天记录、角色、世界书、程序目录、离线 runtime 等高风险项目只显示，不提供直接清理。
 
+### 冷启动加速
+
+目标是缩短「点开图标 → 酒馆可用」的时间，改动分两头：
+
+宿主侧（`android-tavern/data/runtime/.../HostRuntime.kt`、`BootstrapSessionManager.kt`）：
+
+- `HealthProbe.awaitReady` 在每 1 秒一轮内以 100ms 间隔探测，Node 一开始监听就能发现。
+- `AssetExtractor.prepareHostExtensionAssets` 用 `bootstrap/.host-asset-sync-stamp` 记录「APK 安装标识 + 脚本与 host 扩展的文件清单」，都没变就跳过那近千个文件的重写。
+- `RootfsRuntimeProvisioner.ensure` 用 `rootfs/.rootfs-runtime-verified-stamp` 记录上次校验通过时的二进制和系统版本，没变就不再跑 `ensure-rootfs-runtime.sh`；手动重试、崩溃自动重启、启动失败后都会重新完整校验。
+
+Node 侧（`android-tavern/app/src/main/assets/bootstrap/scripts/tavern-startup-preload.cjs`，由 `tavern-entrypoint.sh` 用 `node --require` 挂到 server 进程）：
+
+- 打开 compile cache 并在启动后主动 flush。
+- 把 `vectra`、`sillytavern-transformers`、`archiver` 换成惰性桩，第一次用到才加载。
+- 前端库产物已存在时跳过 webpack 编译。
+
+`server-source.zip` 仍是原样的上游源码，这些都是进程内处理。排查问题时设置环境变量 `SILLYDROID_STARTUP_PRELOAD=off` 可整体关闭预加载。
+
 ### 图标和应用名
 
 用户要求：
@@ -300,6 +318,7 @@ CANNOT LINK EXECUTABLE ".../libtermux-node.so": library "libcares.so" not found
 - 修改设置页时要同步更新 `SettingsTabTest`。
 - 修改图标后务必检查 adaptive background。
 - 备份、聊天记录、角色、世界书相关删除功能要非常谨慎，默认只做安全清理。
+- 升级内置 SillyTavern 版本后，惰性桩默认不生效（`tavern-startup-preload.cjs` 里的 `LAZY_SUPPORTED_TAVERN_VERSIONS` 只列了验证过的版本）。要先核对上游 `src/endpoints/vectors.js`、`src/users.js`、`src/transformers.js` 对这三个包的用法没变，再把新版本号加进去。
 
 ## 快速接手流程
 
