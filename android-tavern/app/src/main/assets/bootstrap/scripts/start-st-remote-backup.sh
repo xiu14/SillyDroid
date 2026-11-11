@@ -44,6 +44,13 @@ PID_FILE="$APP_DIR/st-remote-backup.pid"
 
 mkdir -p "$APP_DIR" "$BACKUP_DIR" "$DATA_DIR" "$LOG_DIR"
 
+# App 被系统强杀时 PID 文件留在原地，里面的 PID 之后可能被别的进程复用，甚至正好是新的 App 主进程。
+# 只用 kill -0 会把不相干的进程当成还活着的 sidecar，这次启动就不再拉起备份服务（8787 连不上）。
+# 所以还要核对那个进程的命令行确实是本 sidecar。
+is_running_sidecar() {
+    kill -0 "$1" 2>/dev/null && grep -qa "sidecars/st-remote-backup/server.js" "/proc/$1/cmdline" 2>/dev/null
+}
+
 if [ -f "$PID_FILE" ]; then
     old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     case "$old_pid" in
@@ -51,7 +58,7 @@ if [ -f "$PID_FILE" ]; then
             rm -f "$PID_FILE"
             ;;
         *)
-            if kill -0 "$old_pid" 2>/dev/null; then
+            if is_running_sidecar "$old_pid"; then
                 echo "$old_pid"
                 exit 0
             fi
