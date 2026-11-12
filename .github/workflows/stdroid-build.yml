@@ -1,10 +1,13 @@
 name: stdroid-build
 
-# 自用 fork 专用：在 GitHub Actions 上跑与 rbuild 相同的完整构建
-#   rbuild exec bash scripts/build-stdroid-full.sh --build-type debug
-# 往 ci/stdroid 分支推送即触发（push 触发不要求 workflow 在默认分支上）：
-#   git push -f fork HEAD:ci/stdroid
-# 产物：artifact stdroid-apk-debug（artifacts/releases/android-apk/app-debug.apk），保留 3 天。
+# 自用 fork 专用：SillyDroid 的构建都在这里跑，不走 rbuild。
+# 本机入口：bash scripts/stdroid-gha-build.sh（见 AI_HANDOFF.md「常用构建和验证命令」）。
+# 脚本把工作区快照成临时 commit 强推到 ci/stdroid 触发本 workflow（push 触发不要求 workflow 在默认分支上），
+# 参数写在 commit message 的 trailer 里：
+#   Stdroid-CI-Mode: full | gradle
+#   Stdroid-CI-Args: full 模式是 build-stdroid-full.sh 的额外参数；gradle 模式是 Gradle 任务
+# full：scripts/build-stdroid-full.sh --build-type debug，产物 artifact stdroid-apk-debug，保留 3 天。
+# gradle：./gradlew -p android-tavern <任务>，测试报告 artifact stdroid-gradle-reports，保留 3 天。
 # 不建 Release、不改 versionCode：版本号取 android-tavern/gradle.properties 的 stdroidVersionCode。
 
 on:
@@ -32,7 +35,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore build caches
+      - name: Plan
+        id: plan
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          mode="$(printf '%s\n' "$COMMIT_MESSAGE" | sed -n 's/^Stdroid-CI-Mode:[[:space:]]*//p' | tail -n 1 | tr -d '\r')"
+          args="$(printf '%s\n' "$COMMIT_MESSAGE" | sed -n 's/^Stdroid-CI-Args:[[:space:]]*//p' | tail -n 1 | tr -d '\r')"
+          mode="${mode:-full}"
+          case "$mode" in
+            full|gradle) ;;
+            *) echo "未知 Stdroid-CI-Mode：$mode" >&2; exit 1 ;;
+          esac
+          if [[ "$mode" == 'gradle' && -z "$args" ]]; then
+            echo 'gradle 模式需要在 Stdroid-CI-Args 里写 Gradle 任务' >&2
+            exit 1
+          fi
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'args=%s\n' "$args" >> "$GITHUB_OUTPUT"
+          printf 'mode=%s\nargs=%s\n' "$mode" "$args"
+
+      # ubuntu-latest 默认 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，单测会大面积失败。
+      # 固定 JDK 17，与 rbuild 构建机一致。
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 两种模式分开存缓存：gradle 模式的缓存里没有 rootfs / server，不能占用 full 的 key。
+      - name: Restore build caches (full)
+        if: steps.plan.outputs.mode == 'full'
         uses: actions/cache@v4
         with:
           path: |
@@ -42,22 +75,51 @@ jobs:
             ~/.gradle/wrapper
             artifacts/releases/rootfs
             artifacts/releases/server-source
-          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
             stdroid-build-${{ runner.os }}-
 
+      - name: Restore build caches (gradle)
+        if: steps.plan.outputs.mode == 'gradle'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
+          restore-keys: |
+            stdroid-gradle-${{ runner.os }}-
+
       - name: Install system packages
+        if: steps.plan.outputs.mode == 'full'
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unzip zip binutils xz-utils libatomic1
 
-      - name: Build
+      - name: Build (full)
+        if: steps.plan.outputs.mode == 'full'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash ./scripts/build-stdroid-full.sh --build-type debug --tavern-tag "$STDROID_TAVERN_TAG"
+          CI_ARGS: ${{ steps.plan.outputs.args }}
+        run: |
+          read -ra extra <<< "$CI_ARGS"
+          tag_args=(--tavern-tag "$STDROID_TAVERN_TAG")
+          for arg in "${extra[@]}"; do
+            [[ "$arg" == '--tavern-tag' ]] && tag_args=()
+          done
+          bash ./scripts/build-stdroid-full.sh --build-type debug "${tag_args[@]}" "${extra[@]}"
+
+      - name: Build (gradle)
+        if: steps.plan.outputs.mode == 'gradle'
+        env:
+          CI_ARGS: ${{ steps.plan.outputs.args }}
+        run: |
+          read -ra tasks <<< "$CI_ARGS"
+          bash ./gradlew --no-daemon --console=plain -p android-tavern "${tasks[@]}"
 
       - name: Upload APK
+        if: steps.plan.outputs.mode == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: stdroid-apk-debug
@@ -65,3 +127,12 @@ jobs:
           retention-days: 3
           compression-level: 0
           if-no-files-found: error
+
+      - name: Upload Gradle reports
+        if: always() && steps.plan.outputs.mode == 'gradle'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stdroid-gradle-reports
+          path: android-tavern/**/build/reports/
+          retention-days: 3
+          if-no-files-found: ignore

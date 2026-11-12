@@ -207,16 +207,30 @@ android-tavern/app/src/main/res/drawable-anydpi-v26/ic_launcher.xml
 
 ## 常用构建和验证命令
 
-构建一律走远程构建机（`rbuild`，说明见 `/root/workspace/android-remote-build/README.md`），不要在本机跑 `./gradlew`。在仓库根目录执行：
+**本项目的构建一律走 GitHub Actions，不走 `rbuild`**，也不要在本机跑 `./gradlew`。入口是 `scripts/stdroid-gha-build.sh`，在仓库根目录执行：
 
 ```bash
 cd /root/workspace/SillyDroid
 ```
 
-设置页和相关单测：
+打 debug APK（完整流程 stage 1→4，日常改宿主代码也用这个）：
 
 ```bash
-rbuild -p android-tavern \
+bash scripts/stdroid-gha-build.sh                       # Tavern 版本固定为 workflow 里的 STDROID_TAVERN_TAG
+bash scripts/stdroid-gha-build.sh --tavern-tag latest   # 额外参数原样传给 scripts/build-stdroid-full.sh
+bash scripts/stdroid-gha-build.sh --refresh             # 忽略缓存里的 stage 1/3 产物，强制重建
+```
+
+产物下载到：
+
+```text
+/root/workspace/SillyDroid/artifacts/releases/android-apk/app-debug.apk
+```
+
+只跑 Gradle 任务（单测、编译检查），比如设置页和相关单测：
+
+```bash
+bash scripts/stdroid-gha-build.sh gradle \
 :feature:settings:compileDebugKotlin \
 :feature:settings:testDebugUnitTest \
 :feature:main:testDebugUnitTest \
@@ -224,29 +238,20 @@ rbuild -p android-tavern \
 :data:settings:testDebugUnitTest
 ```
 
-日常打 debug APK（直接用工作区 assets 里现有的 rootfs / server / jniLibs，只改宿主代码时用这个）：
+失败时脚本会打印失败步骤日志的末尾，测试报告下载到 `artifacts/ci-reports/<run id>/`。
 
-```bash
-rbuild -p android-tavern :app:assembleDebug
-```
+工作方式（workflow：`.github/workflows/stdroid-build.yml`）：
 
-产物会拉回 Gradle 原始路径，直接使用，不再额外复制或改名：
-
-```text
-/root/workspace/SillyDroid/android-tavern/app/build/outputs/apk/debug/app-debug.apk
-```
-
-完整流程（重建 rootfs、server source 等 stage 1→4，比如要换 SillyTavern 版本时）：
-
-```bash
-rbuild exec bash scripts/build-stdroid-full.sh --build-type debug                # Tavern 版本沿用当前 assets
-rbuild exec bash scripts/build-stdroid-full.sh --build-type debug --tavern-tag latest
-```
-
-- 不要直接用上游的 `scripts/build-tavern-android-local.sh`：它会按上游 release 计算 versionCode（如 1810001069），覆盖 `gradle.properties` 的 `stdroidVersionCode`，装到手机后会挡住后续版本的覆盖安装。
-- 产物：`artifacts/releases/android-apk/app-debug.apk`。stage 1/3 产物留在构建机的 `artifacts/` 里复用，`--refresh` 强制重建。
-- 完整流程打出的 APK 里的 rootfs/server 来自构建机，不会回写本机 `android-tavern/app/src/main/assets`。如果用完整流程换了 Tavern 版本，之后的日常 `:app:assembleDebug` 仍会打进本机 assets 里的旧版本。
-- rbuild 同步规则在仓库根目录 `.rbuild.env`（同步 `.git`、保留远程 `artifacts/`、拉回 APK、自动安装 binutils 等系统包）。
+- 脚本用临时 index 把工作区快照成一个 commit（父提交是 HEAD，包含未提交的改动和没被 gitignore 的新文件），强推到 fork `xiu14/SillyDroid` 的 `ci/stdroid` 分支来触发构建；当前分支、暂存区和工作区都不动。参数写在 commit message 的 `Stdroid-CI-Mode` / `Stdroid-CI-Args` trailer 里。
+- fork 是**公开仓库**，未提交的改动也会推上去，不要把密钥放在没被 gitignore 的文件里。
+- 被 gitignore 的文件不会上传，包括 `android-tavern/app/src/main/assets` 里的 rootfs、`server-source.zip`、`server-source-manifest.json`。所以 CI 上不能单跑 `:app:assembleDebug`，打 APK 只能走完整流程，rootfs 和 server 由 stage 1/3 现做。
+- Tavern 版本：本机 assets 的 manifest 不入库，CI 上读不到，所以 workflow 里用 `STDROID_TAVERN_TAG`（当前 `1.18.0`）固定版本，免得悄悄升级。升级 Tavern 时要同步改这个值。
+- 版本号取 `android-tavern/gradle.properties` 的 `stdroidVersionCode` / `stdroidVersionName`；debug 签名用仓库里的 `android-tavern/app/signing/debug.keystore`，不需要配 Secret。release 构建暂不支持。
+- JDK 固定 17（`actions/setup-java`）：`ubuntu-latest` 默认是 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，用 25 的话 `:feature:main:testDebugUnitTest` 会有约 30 个测试失败。
+- 不要用 fork 上现成的 `tavern-upstream-apk` workflow，也不要直接用上游的 `scripts/build-tavern-android-local.sh`：它们按上游 release 计算 versionCode（如 1810001069），装到手机后会挡住后续 stdroid 版本的覆盖安装；前者还会在 fork 上建 Release。
+- 耗时（2026-11 实测，公开仓库的 runner 是 4 核 16G）：触发后几秒内开跑；没缓存时完整构建约 6 分钟，有缓存约 2 分钟（Gradle 1m28s）；337MB 的 APK 走代理下载回本机约 2 分钟。
+- 缓存（`actions/cache`）：rootfs、server source、Gradle 依赖。7 天没用会被删除，构建脚本或 gradle 配置一改也会换 key；之后第一次构建会慢一些，会自动重建，不用手动处理。APK artifact 保留 3 天。
+- `.rbuild.env` 是以前走 rbuild 时留下的，只作 GHA 不可用时的备用方案（`rbuild exec bash scripts/build-stdroid-full.sh --build-type debug`），平时不要用。
 
 ## Stdroid JS-Slash-Runner 导入 API
 
@@ -347,13 +352,13 @@ git log --oneline custom/st-shell..origin/master
 4. 改完后至少跑：
 
 ```bash
-rbuild -p android-tavern :app:assembleDebug
+bash scripts/stdroid-gha-build.sh
 ```
 
 5. APK 产物路径：
 
 ```text
-/root/workspace/SillyDroid/android-tavern/app/build/outputs/apk/debug/app-debug.apk
+/root/workspace/SillyDroid/artifacts/releases/android-apk/app-debug.apk
 ```
 
 6. 用户要求推送时：
