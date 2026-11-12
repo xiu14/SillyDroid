@@ -1,0 +1,67 @@
+name: stdroid-build
+
+# 自用 fork 专用：在 GitHub Actions 上跑与 rbuild 相同的完整构建
+#   rbuild exec bash scripts/build-stdroid-full.sh --build-type debug
+# 往 ci/stdroid 分支推送即触发（push 触发不要求 workflow 在默认分支上）：
+#   git push -f fork HEAD:ci/stdroid
+# 产物：artifact stdroid-apk-debug（artifacts/releases/android-apk/app-debug.apk），保留 3 天。
+# 不建 Release、不改 versionCode：版本号取 android-tavern/gradle.properties 的 stdroidVersionCode。
+
+on:
+  push:
+    branches:
+      - ci/stdroid
+
+concurrency:
+  group: stdroid-build
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # assets 里的 server-source-manifest.json 不入库，CI 上读不到当前版本；
+  # 固定与本机 assets 一致，避免无意中升级 SillyTavern。升级 Tavern 时同步改这里。
+  STDROID_TAVERN_TAG: '1.18.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/sillydroid-android-toolchain
+            ~/.cache/sillydroid-android-rootfs
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            artifacts/releases/rootfs
+            artifacts/releases/server-source
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          restore-keys: |
+            stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
+            stdroid-build-${{ runner.os }}-
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unzip zip binutils xz-utils libatomic1
+
+      - name: Build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ./scripts/build-stdroid-full.sh --build-type debug --tavern-tag "$STDROID_TAVERN_TAG"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: stdroid-apk-debug
+          path: artifacts/releases/android-apk/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
