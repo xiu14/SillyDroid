@@ -1,14 +1,17 @@
 name: stdroid-build
 
-# 自用 fork 专用：SillyDroid 的构建都在这里跑，不走 rbuild。
-# 本机入口：bash scripts/stdroid-gha-build.sh（见 AI_HANDOFF.md「常用构建和验证命令」）。
+# 自用 fork 专用：SillyDroid 的构建和发布都在这里跑，不走 rbuild。
+# 本机入口：bash scripts/stdroid-gha-build.sh（见 AI_HANDOFF.md「常用构建和验证命令」「发布新版本」）。
 # 脚本把工作区快照成临时 commit 强推到 ci/stdroid 触发本 workflow（push 触发不要求 workflow 在默认分支上），
 # 参数写在 commit message 的 trailer 里：
-#   Stdroid-CI-Mode: full | gradle
-#   Stdroid-CI-Args: full 模式是 build-stdroid-full.sh 的额外参数；gradle 模式是 Gradle 任务
+#   Stdroid-CI-Mode: full | gradle | publish
+#   Stdroid-CI-Args: full / publish 模式是 build-stdroid-full.sh 的额外参数；gradle 模式是 Gradle 任务
+#   Stdroid-CI-Changelog-B64: publish 模式的更新说明（base64）
 # full：scripts/build-stdroid-full.sh --build-type debug，产物 artifact stdroid-apk-debug，保留 3 天。
 # gradle：./gradlew -p android-tavern <任务>，测试报告 artifact stdroid-gradle-reports，保留 3 天。
-# 不建 Release、不改 versionCode：版本号取 android-tavern/gradle.properties 的 stdroidVersionCode。
+# publish：同 full，再建 Release stdroid-v<versionName>，挂上 APK 和 version.json 并设为 latest；
+#   App 从 releases/latest/download/version.json 检查更新（android-tavern/app/build.gradle.kts）。
+# 版本号取 android-tavern/gradle.properties 的 stdroidVersionCode / stdroidVersionName，不按上游规则改写。
 
 on:
   push:
@@ -29,6 +32,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,20 +45,71 @@ jobs:
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          mode="$(printf '%s\n' "$COMMIT_MESSAGE" | sed -n 's/^Stdroid-CI-Mode:[[:space:]]*//p' | tail -n 1 | tr -d '\r')"
-          args="$(printf '%s\n' "$COMMIT_MESSAGE" | sed -n 's/^Stdroid-CI-Args:[[:space:]]*//p' | tail -n 1 | tr -d '\r')"
+          trailer() {
+            printf '%s\n' "$COMMIT_MESSAGE" | sed -n "s/^$1:[[:space:]]*//p" | tail -n 1 | tr -d '\r'
+          }
+          mode="$(trailer Stdroid-CI-Mode)"
+          args="$(trailer Stdroid-CI-Args)"
+          changelog_b64="$(trailer Stdroid-CI-Changelog-B64)"
           mode="${mode:-full}"
           case "$mode" in
-            full|gradle) ;;
+            full|publish) full='true' ;;
+            gradle) full='false' ;;
             *) echo "未知 Stdroid-CI-Mode：$mode" >&2; exit 1 ;;
           esac
           if [[ "$mode" == 'gradle' && -z "$args" ]]; then
             echo 'gradle 模式需要在 Stdroid-CI-Args 里写 Gradle 任务' >&2
             exit 1
           fi
-          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
-          printf 'args=%s\n' "$args" >> "$GITHUB_OUTPUT"
+          if [[ "$mode" == 'publish' ]]; then
+            changelog="$(printf '%s' "$changelog_b64" | base64 --decode)"
+            if [[ -z "${changelog//[[:space:]]/}" ]]; then
+              echo 'publish 模式需要更新说明（Stdroid-CI-Changelog-B64）' >&2
+              exit 1
+            fi
+          fi
+          {
+            printf 'mode=%s\n' "$mode"
+            printf 'full=%s\n' "$full"
+            printf 'args=%s\n' "$args"
+            printf 'changelog_b64=%s\n' "$changelog_b64"
+          } >> "$GITHUB_OUTPUT"
           printf 'mode=%s\nargs=%s\n' "$mode" "$args"
+
+      # 构建前先检查版本号和 tag，免得白编一趟。
+      - name: Check release version
+        id: version
+        if: steps.plan.outputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read_property() {
+            sed -n "s/^$1=//p" android-tavern/gradle.properties | head -n 1 | tr -d '\r[:space:]'
+          }
+          code="$(read_property stdroidVersionCode)"
+          name="$(read_property stdroidVersionName)"
+          [[ "$code" =~ ^[0-9]+$ && -n "$name" ]] || { echo "gradle.properties 版本号无效：code=$code name=$name" >&2; exit 1; }
+          tag="stdroid-v$name"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag 已存在，先改 stdroidVersionName / stdroidVersionCode" >&2
+            exit 1
+          fi
+          latest_url="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/version.json"
+          status="$(curl -sL -o "$RUNNER_TEMP/latest-version.json" -w '%{http_code}' "$latest_url")"
+          if [[ "$status" == '200' ]]; then
+            current="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("versionCode", 0)))' "$RUNNER_TEMP/latest-version.json")"
+          elif [[ "$status" == '404' ]]; then
+            current=0
+          else
+            echo "读取线上 version.json 失败：HTTP $status" >&2
+            exit 1
+          fi
+          if (( code <= current )); then
+            echo "stdroidVersionCode=$code 不大于线上 versionCode=$current，App 不会提示更新" >&2
+            exit 1
+          fi
+          printf 'code=%s\nname=%s\ntag=%s\n' "$code" "$name" "$tag" >> "$GITHUB_OUTPUT"
+          printf '发布 %s（versionCode %s，线上 %s）\n' "$tag" "$code" "$current"
 
       # ubuntu-latest 默认 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，单测会大面积失败。
       # 固定 JDK 17，与 rbuild 构建机一致。
@@ -65,7 +121,7 @@ jobs:
 
       # 两种模式分开存缓存：gradle 模式的缓存里没有 rootfs / server，不能占用 full 的 key。
       - name: Restore build caches (full)
-        if: steps.plan.outputs.mode == 'full'
+        if: steps.plan.outputs.full == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -92,13 +148,13 @@ jobs:
             stdroid-gradle-${{ runner.os }}-
 
       - name: Install system packages
-        if: steps.plan.outputs.mode == 'full'
+        if: steps.plan.outputs.full == 'true'
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unzip zip binutils xz-utils libatomic1
 
       - name: Build (full)
-        if: steps.plan.outputs.mode == 'full'
+        if: steps.plan.outputs.full == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CI_ARGS: ${{ steps.plan.outputs.args }}
@@ -136,3 +192,47 @@ jobs:
           path: android-tavern/**/build/reports/
           retention-days: 3
           if-no-files-found: ignore
+
+      # 先建草稿、传完 APK 和 version.json 再正式发布，latest/download/version.json 不会指向还没传完的 APK。
+      - name: Publish release
+        if: steps.plan.outputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGELOG_B64: ${{ steps.plan.outputs.changelog_b64 }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          out="$RUNNER_TEMP/release"
+          mkdir -p "$out"
+          asset="$RELEASE_TAG.apk"
+          cp artifacts/releases/android-apk/app-debug.apk "$out/$asset"
+          printf '%s' "$CHANGELOG_B64" | base64 --decode > "$out/notes.md"
+          python3 - "$out/$asset" "$out/notes.md" > "$out/version.json" <<'EOF'
+          import datetime, hashlib, json, os, sys
+          apk, notes = sys.argv[1:]
+          repo, tag, name = os.environ["GITHUB_REPOSITORY"], os.environ["RELEASE_TAG"], os.environ["VERSION_NAME"]
+          asset = os.path.basename(apk)
+          h = hashlib.sha256()
+          with open(apk, "rb") as f:
+              for block in iter(lambda: f.read(1 << 20), b""):
+                  h.update(block)
+          print(json.dumps({
+              "app": "stdroid",
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": name,
+              "apkKey": asset,
+              "apkUrl": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
+              "size": os.path.getsize(apk),
+              "sha256": h.hexdigest(),
+              "changelog": open(notes, encoding="utf-8").read().strip(),
+              "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+          }, ensure_ascii=False, indent=2))
+          EOF
+          cat "$out/version.json"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Stdroid v$VERSION_NAME" --notes-file "$out/notes.md" --draft
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "$out/$asset" "$out/version.json"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          printf '### Stdroid v%s 已发布\n\n- versionCode: %s\n- https://github.com/%s/releases/tag/%s\n' \
+            "$VERSION_NAME" "$VERSION_CODE" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

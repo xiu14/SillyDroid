@@ -168,7 +168,7 @@ fun quoteBuildConfigString(value: String): String {
 }
 
 // 自用版版本号默认取 gradle.properties 的 stdroidVersionCode / stdroidVersionName，
-// filesite 按 versionCode 判断新旧，每次发布前都要递增。
+// 检查更新按 versionCode 判断新旧，每次发布前都要递增。
 fun resolveEnvOrGradleProperty(envName: String, propertyName: String): String {
     return System.getenv(envName).orEmpty().trim().ifBlank {
         providers.gradleProperty(propertyName).orNull?.trim().orEmpty()
@@ -261,11 +261,13 @@ android {
         buildConfigField("String", "SILLYDROID_HOST_VERSION", quoteBuildConfigString(androidHostVersion))
         buildConfigField("String", "SILLYDROID_UPSTREAM_VERSION", quoteBuildConfigString(androidUpstreamVersion))
         buildConfigField("String", "SILLYDROID_GITHUB_REPOSITORY", quoteBuildConfigString("jialmaster/SillyDroid"))
-        // STDROID 自用版从 filesite 检查更新，发布流程见 /root/workspace/filesite-upload.md。
+        // STDROID 自用版从 fork 的 GitHub Release 检查更新：最新 Release 里的 version.json。
+        // 发布：bash scripts/stdroid-gha-build.sh publish --changelog '...'（见 AI_HANDOFF.md）。
+        // APK 超过 filesite 的 300MB 上限，所以不再走 filesite。
         buildConfigField(
             "String",
             "SILLYDROID_LATEST_RELEASE_METADATA_URL",
-            quoteBuildConfigString("https://files.biatch.party/api/version/stdroid")
+            quoteBuildConfigString("https://github.com/xiu14/SillyDroid/releases/latest/download/version.json")
         )
         buildConfigField(
             "String",

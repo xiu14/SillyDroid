@@ -26,6 +26,25 @@ class FilesiteVersionParserTest {
     }
 
     @Test
+    fun parsesGithubReleaseVersionJson() {
+        // stdroid-build workflow publish 模式写到 GitHub Release 的 version.json：apkKey 就是 Release 资产名。
+        val json = JSONObject(versionJson(versionCode = 3))
+            .put("apkKey", "stdroid-v1.0.3.apk")
+            .put("apkUrl", "https://github.com/xiu14/SillyDroid/releases/download/stdroid-v1.0.3/stdroid-v1.0.3.apk")
+        val release = FilesiteVersionParser.parseLatestAvailableRelease(
+            versionInfo = json,
+            config = requestConfig(currentVersionCode = 2)
+        )
+
+        requireNotNull(release)
+        assertEquals("stdroid-v1.0.3.apk", release.apkAssetName)
+        assertEquals(
+            "https://github.com/xiu14/SillyDroid/releases/download/stdroid-v1.0.3/stdroid-v1.0.3.apk",
+            release.apkDownloadUrl
+        )
+    }
+
+    @Test
     fun ignoresSameOrOlderVersionCode() {
         assertNull(
             FilesiteVersionParser.parseLatestAvailableRelease(

@@ -253,6 +253,28 @@ bash scripts/stdroid-gha-build.sh gradle \
 - 缓存（`actions/cache`）：rootfs、server source、Gradle 依赖。7 天没用会被删除，构建脚本或 gradle 配置一改也会换 key；之后第一次构建会慢一些，会自动重建，不用手动处理。APK artifact 保留 3 天。
 - `.rbuild.env` 是以前走 rbuild 时留下的，只作 GHA 不可用时的备用方案（`rbuild exec bash scripts/build-stdroid-full.sh --build-type debug`），平时不要用。
 
+## 发布新版本（应用内更新）
+
+App 从 fork 的 GitHub Release 检查更新：`https://github.com/xiu14/SillyDroid/releases/latest/download/version.json`（`android-tavern/app/build.gradle.kts` 的 `SILLYDROID_LATEST_RELEASE_METADATA_URL`）。APK 有 337MB，超过了 filesite 的 300MB 上限，所以**不走 filesite**，也不要再往 `files.biatch.party` 写 `versions/stdroid.json`。filesite 的 Worker 会把 `apkUrl` 强制改写成自己的 `/dl/` 地址，所以没法只用它来存版本 JSON。
+
+发布前先向用户确认 `versionCode`、`versionName` 和更新说明，缺哪个问哪个，不要猜。然后：
+
+```bash
+# 1. 递增版本号并提交（versionCode 必须大于线上值，否则 App 不会提示更新）
+#    android-tavern/gradle.properties：stdroidVersionCode=<code>、stdroidVersionName=<name>
+git commit -am "chore: 发布 v<name>"
+
+# 2. 发布：GHA 完整构建 → 建 Release stdroid-v<name>（APK + version.json）→ 设为 latest
+bash scripts/stdroid-gha-build.sh publish --changelog '修复 xxx；新增 yyy'
+bash scripts/stdroid-gha-build.sh publish --changelog-file notes.md   # 多行说明
+```
+
+- 脚本和 workflow 都会检查：工作区必须干净，`versionCode` 必须大于线上 `version.json` 的值，同名 tag 不能已存在。任何一项不满足都会在构建前停下。
+- Release 先建成草稿，APK 和 `version.json` 传完才正式发布并设为 latest，App 不会拿到指向还没传完的文件的版本。
+- `version.json` 和 filesite 的格式一样（`versionCode`、`versionName`、`apkKey`=Release 资产名、`apkUrl`=固定 tag 的下载地址、`size`、`sha256`、`changelog`），由 `FilesiteVersionParser` 解析，`sha256` 由 workflow 计算。
+- 撤回某个版本：`gh release delete stdroid-v<name> -R xiu14/SillyDroid --cleanup-tag`，latest 会回落到上一个 Release；或者用 `gh release edit <上一个 tag> --latest` 把上一个版本重新设为 latest。
+- Release 的 tag 指向 `ci/stdroid` 上的快照提交，内容和当时的 HEAD 一致；`custom/st-shell` 分支仍然只在用户要求推送时推。
+
 ## Stdroid JS-Slash-Runner 导入 API
 
 当前 8788 本机导入 API 只支持全局脚本：

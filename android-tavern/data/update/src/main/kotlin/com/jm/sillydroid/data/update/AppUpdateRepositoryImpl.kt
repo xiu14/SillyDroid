@@ -46,7 +46,7 @@ class AppUpdateRepositoryImpl(
     }
 
     override suspend fun fetchLatestAvailableRelease(config: AppUpdateRequestConfig): AvailableAppRelease? {
-        // filesite 对从未发布过的 App 返回 404，视为没有可用更新而不是检查失败。
+        // 还没有任何 Release（GitHub latest/download 返回 404）视为没有可用更新而不是检查失败。
         val versionInfo = fetchJsonObject(config.latestReleaseMetadataUrl) ?: return null
         return FilesiteVersionParser.parseLatestAvailableRelease(
             versionInfo = versionInfo,

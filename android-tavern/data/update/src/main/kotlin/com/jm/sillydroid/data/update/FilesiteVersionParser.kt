@@ -7,7 +7,9 @@ import org.json.JSONObject
 
 internal object FilesiteVersionParser {
     /**
-     * 解析 filesite `GET /api/version/<app>` 返回的版本信息；
+     * 解析 filesite `GET /api/version/<app>` 格式的版本信息；STDROID 现在从 GitHub Release 的
+     * `version.json` 读取同一格式（由 .github/workflows/stdroid-build.yml 的 publish 模式生成，
+     * apkKey 是 Release 资产名，apkUrl 指向固定 tag 的下载地址）。
      * 只按 versionCode 判断新旧，与 Android 覆盖安装的判定保持一致。
      */
     fun parseLatestAvailableRelease(
