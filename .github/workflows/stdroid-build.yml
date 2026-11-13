@@ -4,13 +4,16 @@ name: stdroid-build
 # 本机入口：bash scripts/stdroid-gha-build.sh（见 AI_HANDOFF.md「常用构建和验证命令」「发布新版本」）。
 # 脚本把工作区快照成临时 commit 强推到 ci/stdroid 触发本 workflow（push 触发不要求 workflow 在默认分支上），
 # 参数写在 commit message 的 trailer 里：
-#   Stdroid-CI-Mode: full | gradle | publish
+#   Stdroid-CI-Mode: full | gradle | publish | keepalive
 #   Stdroid-CI-Args: full / publish 模式是 build-stdroid-full.sh 的额外参数；gradle 模式是 Gradle 任务
 #   Stdroid-CI-Changelog-B64: publish 模式的更新说明（base64）
 # full：scripts/build-stdroid-full.sh --build-type debug，产物 artifact stdroid-apk-debug，保留 3 天。
 # gradle：./gradlew -p android-tavern <任务>，测试报告 artifact stdroid-gradle-reports，保留 3 天。
 # publish：同 full，再建 Release stdroid-v<versionName>，挂上 APK 和 version.json 并设为 latest；
 #   App 从 releases/latest/download/version.json 检查更新（android-tavern/app/build.gradle.kts）。
+# keepalive：只把 full / gradle 两份缓存各拉一次，刷新「最后使用时间」，不编译、不存缓存；
+#   GitHub 会删掉 7 天没用过的缓存，没缓存的完整构建要 11 分钟多，有缓存约 2.5 分钟。
+#   由 VPS 的 cron 每天跑 scripts/stdroid-gha-keepalive.sh，缓存 4 天没用才推一次。
 # 版本号取 android-tavern/gradle.properties 的 stdroidVersionCode / stdroidVersionName，不按上游规则改写。
 
 on:
@@ -18,8 +21,9 @@ on:
     branches:
       - ci/stdroid
 
+# keepalive 单独一组：既不会取消正在跑的构建，也不会被之后推的构建取消。
 concurrency:
-  group: stdroid-build
+  group: stdroid-build-${{ contains(github.event.head_commit.message, 'Stdroid-CI-Mode: keepalive') && 'keepalive' || 'build' }}
   cancel-in-progress: true
 
 env:
@@ -54,7 +58,7 @@ jobs:
           mode="${mode:-full}"
           case "$mode" in
             full|publish) full='true' ;;
-            gradle) full='false' ;;
+            gradle|keepalive) full='false' ;;
             *) echo "未知 Stdroid-CI-Mode：$mode" >&2; exit 1 ;;
           esac
           if [[ "$mode" == 'gradle' && -z "$args" ]]; then
@@ -114,6 +118,7 @@ jobs:
       # ubuntu-latest 默认 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，单测会大面积失败。
       # 固定 JDK 17，与 rbuild 构建机一致。
       - name: Set up JDK 17
+        if: steps.plan.outputs.mode != 'keepalive'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -131,7 +136,7 @@ jobs:
             ~/.gradle/wrapper
             artifacts/releases/rootfs
             artifacts/releases/server-source
-          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
             stdroid-build-${{ runner.os }}-
@@ -146,6 +151,44 @@ jobs:
           key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-gradle-${{ runner.os }}-
+
+      # keepalive：key 和 restore-keys 必须与上面两步保持一致；用 cache/restore，不命中也不会存一份空缓存。
+      - name: Keep cache warm (full)
+        id: keep_full
+        if: steps.plan.outputs.mode == 'keepalive'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/sillydroid-android-toolchain
+            ~/.cache/sillydroid-android-rootfs
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            artifacts/releases/rootfs
+            artifacts/releases/server-source
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          restore-keys: |
+            stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
+            stdroid-build-${{ runner.os }}-
+
+      - name: Keep cache warm (gradle)
+        id: keep_gradle
+        if: steps.plan.outputs.mode == 'keepalive'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
+          restore-keys: |
+            stdroid-gradle-${{ runner.os }}-
+
+      - name: Keepalive summary
+        if: steps.plan.outputs.mode == 'keepalive'
+        env:
+          FULL_KEY: ${{ steps.keep_full.outputs.cache-matched-key }}
+          GRADLE_KEY: ${{ steps.keep_gradle.outputs.cache-matched-key }}
+        run: |
+          printf 'full:   %s\ngradle: %s\n' "${FULL_KEY:-（没有可用缓存）}" "${GRADLE_KEY:-（没有可用缓存）}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Install system packages
         if: steps.plan.outputs.full == 'true'

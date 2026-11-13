@@ -251,6 +251,7 @@ bash scripts/stdroid-gha-build.sh gradle \
 - 不要用 fork 上现成的 `tavern-upstream-apk` workflow，也不要直接用上游的 `scripts/build-tavern-android-local.sh`：它们按上游 release 计算 versionCode（如 1810001069），装到手机后会挡住后续 stdroid 版本的覆盖安装；前者还会在 fork 上建 Release。
 - 耗时（2026-11 实测，公开仓库的 runner 是 4 核 16G）：触发后几秒内开跑；没缓存时完整构建约 6 分钟，有缓存约 2 分钟（Gradle 1m28s）；337MB 的 APK 走代理下载回本机约 2 分钟。
 - 缓存（`actions/cache`）：rootfs、server source、Gradle 依赖。7 天没用会被删除，构建脚本或 gradle 配置一改也会换 key；之后第一次构建会慢一些，会自动重建，不用手动处理。APK artifact 保留 3 天。
+- 缓存保活：VPS 的 crontab 每天 05:23 跑 `scripts/stdroid-gha-keepalive.sh`（日志 `artifacts/gha-keepalive.log`）。缓存 4 天没用时，它会在 `ci/stdroid` 上追加一个 `Stdroid-CI-Mode: keepalive` 空提交；workflow 只拉一次缓存刷新使用时间，约 1 分钟，不编译、不存缓存，也不会取消正在跑的构建。`--force` 可手动触发。它基于 `ci/stdroid` 当前提交的 tree，所以最后一次推上去的快照里必须有带 keepalive 模式的 workflow。
 - `.rbuild.env` 是以前走 rbuild 时留下的，只作 GHA 不可用时的备用方案（`rbuild exec bash scripts/build-stdroid-full.sh --build-type debug`），平时不要用。
 
 ## 发布新版本（应用内更新）
