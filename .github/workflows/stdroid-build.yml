@@ -23,7 +23,7 @@ on:
 
 # keepalive 单独一组：既不会取消正在跑的构建，也不会被之后推的构建取消。
 concurrency:
-  group: stdroid-build-${{ contains(github.event.head_commit.message, 'Stdroid-CI-Mode: keepalive') && 'keepalive' || 'build' }}
+  group: "stdroid-build-${{ contains(github.event.head_commit.message, 'Stdroid-CI-Mode: keepalive') && 'keepalive' || 'build' }}"
   cancel-in-progress: true
 
 env:
