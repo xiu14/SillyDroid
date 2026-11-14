@@ -200,8 +200,14 @@ case "$mode" in
         ;;
     publish)
         echo "==> 已发布：https://github.com/$repo/releases/tag/stdroid-v$version_name"
+        # 刚发布的几秒内 releases/latest 的跳转可能还指向上一个版本，等它切过来再打印。
+        for _ in $(seq 1 30); do
+            latest_json="$(curl -sL "$latest_version_url?t=$(date +%s)" || true)"
+            [[ "$latest_json" == *"\"versionCode\": $version_code,"* ]] && break
+            sleep 2
+        done
         echo '==> 线上 version.json（App 检查更新读的就是它）：'
-        curl -sL "$latest_version_url"
+        printf '%s' "$latest_json"
         echo
         echo "==> 完成，总用时 $(( $(date +%s) - started_at ))s"
         ;;
