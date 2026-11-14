@@ -73,6 +73,50 @@ class RootfsRuntimeProvisionerTest {
     }
 
     @Test
+    fun `ensure skips precheck after reinstall when binaries content is unchanged`() {
+        val rootDirectory = createTempTestDirectory(prefix = "rootfs-runtime-reinstall")
+        try {
+            val paths = createRootfsTestHostPaths(rootDirectory)
+            File(paths.rootfsDir, "rootfs-manifest.json").writeText("""{"runtimeMode":"termux-host"}""")
+            paths.hostTermuxNodeBinary.writeText("node-binary")
+            val launcher = RecordingLinuxRuntimeLauncher(paths) { _, _ -> FakeProcess(exitCode = 0) }
+            val provisioner = RootfsRuntimeProvisioner(launcher, paths)
+
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(1, launcher.requests.size)
+
+            // 覆盖安装：nativeLibraryDir 里的文件被重新写出，修改时间变了，内容没变。
+            val node = paths.hostTermuxNodeBinary
+            node.writeText("node-binary")
+            assertTrue(node.setLastModified(node.lastModified() - 60_000L))
+            val startupLines = mutableListOf<String>()
+            val reinstalled = provisioner.ensure(logFileName = "rootfs-runtime.log", onAttemptLog = startupLines::add)
+            assertTrue(reinstalled.verificationSkipped)
+            assertEquals(1, launcher.requests.size)
+            assertTrue(startupLines.any { line -> line.contains("content hash match") })
+
+            // 沿用结论时已经刷新了文件身份，再次冷启动走快速路径，不用再算哈希。
+            val fastLines = mutableListOf<String>()
+            assertTrue(provisioner.ensure(logFileName = "rootfs-runtime.log", onAttemptLog = fastLines::add).verificationSkipped)
+            assertTrue(fastLines.any { line -> line.contains("runtime unchanged since last successful check") })
+            assertEquals(1, launcher.requests.size)
+
+            // 旧版 v1 标记没有内容哈希，要完整校验一次。
+            File(paths.rootfsDir, ".rootfs-runtime-verified-stamp").writeText("v1\ntermux-host\n\n")
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(2, launcher.requests.size)
+
+            // 内容真的变了（同样大小也算），必须重新校验。
+            node.writeText("node-binarX")
+            assertTrue(node.setLastModified(node.lastModified() - 120_000L))
+            assertFalse(provisioner.ensure(logFileName = "rootfs-runtime.log").verificationSkipped)
+            assertEquals(3, launcher.requests.size)
+        } finally {
+            rootDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `failed precheck is not remembered as verified`() {
         val rootDirectory = createTempTestDirectory(prefix = "rootfs-runtime-failed-stamp")
         try {

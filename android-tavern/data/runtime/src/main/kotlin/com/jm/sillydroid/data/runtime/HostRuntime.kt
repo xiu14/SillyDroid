@@ -59,6 +59,7 @@ private val executableHostRuntimeFileNames = listOf(
 private const val forcePackageHostRuntimeMarkerFileName = ".force-package-host-runtime"
 private const val hostAssetSyncStampFileName = ".host-asset-sync-stamp"
 private const val rootfsRuntimeVerifiedStampFileName = ".rootfs-runtime-verified-stamp"
+private const val verifiedStampSectionSeparator = "\n--\n"
 
 internal fun isHostRuntimeDirectoryReady(hostLibDir: File): Boolean {
     val requiredFilesReady = hostLibDir.containsNamedFiles(requiredHostRuntimeFileNames)
@@ -1675,15 +1676,33 @@ class RootfsRuntimeProvisioner(
         onHeartbeat: (elapsedSeconds: Int) -> Unit = {}
     ): RootfsRuntimeEnsureResult {
         val runtimeMode = readInstalledRuntimeMode(paths)
-        // 校验脚本只是把 node/git/curl/sh 各拉起来一遍确认能执行，每次冷启动要花约半秒。
+        // 校验脚本只是把 node/git/curl/sh 各拉起来一遍确认能执行，冷启动要花约半秒，覆盖安装后第一次要 6 秒左右。
         // 这些二进制和 rootfs 没变、系统也没升级时，上次校验通过的结论仍然成立，直接沿用。
-        val verifiedStamp = buildVerifiedStamp(runtimeMode)
-        if (!forceVerify && readVerifiedStamp() == verifiedStamp) {
-            onAttemptLog("rootfs-runtime verification skipped: runtime unchanged since last successful check, runtimeMode=$runtimeMode.")
-            return RootfsRuntimeEnsureResult(
-                runtimeMode = runtimeMode,
-                verificationSkipped = true
-            )
+        // 标记分两段：文件身份（路径 + 大小 + 修改时间）每次冷启动都比，代价几乎为零；
+        // 对不上时（覆盖安装后 nativeLibraryDir 路径和修改时间都会变）再比内容哈希，二进制没变就沿用结论并刷新文件身份。
+        // 跳过后万一启动失败，BootstrapSessionManager 会调 invalidateVerification()，下次启动照样完整校验。
+        val stampHeader = buildVerifiedStampHeader(runtimeMode)
+        val fileIdentity = buildVerifiedFileIdentity()
+        val storedStamp = readVerifiedStamp()
+        if (!forceVerify && storedStamp != null && storedStamp.header == stampHeader) {
+            if (storedStamp.fileIdentity == fileIdentity) {
+                onAttemptLog("rootfs-runtime verification skipped: runtime unchanged since last successful check, runtimeMode=$runtimeMode.")
+                return RootfsRuntimeEnsureResult(
+                    runtimeMode = runtimeMode,
+                    verificationSkipped = true
+                )
+            }
+            val contentIdentity = buildVerifiedContentIdentity()
+            if (contentIdentity == storedStamp.contentIdentity) {
+                runCatching { writeVerifiedStamp(VerifiedStamp(stampHeader, fileIdentity, contentIdentity)) }
+                onAttemptLog(
+                    "rootfs-runtime verification skipped: runtime binaries unchanged after reinstall (content hash match), runtimeMode=$runtimeMode."
+                )
+                return RootfsRuntimeEnsureResult(
+                    runtimeMode = runtimeMode,
+                    verificationSkipped = true
+                )
+            }
         }
 
         invalidateVerification()
@@ -1694,7 +1713,7 @@ class RootfsRuntimeProvisioner(
         onAttemptLog(attempt.toStartupLogLine(runtimeMode))
         if (attempt.succeeded) {
             onAttemptLog("rootfs-runtime selected runtimeMode=$runtimeMode for this bootstrap session.")
-            runCatching { verifiedStampFile.writeText(verifiedStamp) }
+            runCatching { writeVerifiedStamp(VerifiedStamp(stampHeader, fileIdentity, buildVerifiedContentIdentity())) }
             return RootfsRuntimeEnsureResult(
                 runtimeMode = runtimeMode
             )
@@ -1711,12 +1730,14 @@ class RootfsRuntimeProvisioner(
     private val verifiedStampFile: File
         get() = File(paths.rootfsDir, rootfsRuntimeVerifiedStampFileName)
 
-    private fun readVerifiedStamp(): String? {
-        return runCatching { verifiedStampFile.takeIf { it.isFile }?.readText() }.getOrNull()
-    }
+    private data class VerifiedStamp(
+        val header: String,
+        val fileIdentity: String,
+        val contentIdentity: String
+    )
 
-    private fun buildVerifiedStamp(runtimeMode: String): String {
-        val checkedFiles = listOf(
+    private val verifiedCheckedFiles: List<File>
+        get() = listOf(
             paths.hostTermuxNodeBinary,
             paths.hostTermuxGitBinary,
             paths.hostTermuxGitRemoteHttpBinary,
@@ -1724,16 +1745,68 @@ class RootfsRuntimeProvisioner(
             paths.hostTermuxShellBinary,
             File(paths.rootfsDir, "rootfs-manifest.json")
         )
+
+    private fun readVerifiedStamp(): VerifiedStamp? {
+        val text = runCatching { verifiedStampFile.takeIf { it.isFile }?.readText() }.getOrNull() ?: return null
+        // 旧版（v1）标记没有内容哈希，解析不出来就当没有标记，完整校验一次后写成新格式。
+        val sections = text.split(verifiedStampSectionSeparator)
+        if (sections.size != 3) {
+            return null
+        }
+        return VerifiedStamp(header = sections[0], fileIdentity = sections[1], contentIdentity = sections[2])
+    }
+
+    private fun writeVerifiedStamp(stamp: VerifiedStamp) {
+        verifiedStampFile.writeText(
+            listOf(stamp.header, stamp.fileIdentity, stamp.contentIdentity).joinToString(verifiedStampSectionSeparator)
+        )
+    }
+
+    private fun buildVerifiedStampHeader(runtimeMode: String): String {
         return buildString {
-            append("v1\n")
+            append("v2\n")
             append(runtimeMode).append('\n')
             // 系统升级可能改变 native exec 的行为（SELinux、linker），升级后要重新校验一次。
             append(Build.FINGERPRINT.orEmpty()).append('\n')
-            checkedFiles.forEach { file ->
-                // 安装目录路径每次覆盖安装都会变，路径本身就能区分不同的 APK 安装。
+        }
+    }
+
+    private fun buildVerifiedFileIdentity(): String {
+        return buildString {
+            verifiedCheckedFiles.forEach { file ->
                 append(file.absolutePath).append(':').append(file.length()).append(':').append(file.lastModified()).append('\n')
             }
         }
+    }
+
+    private fun buildVerifiedContentIdentity(): String {
+        // 只在文件身份对不上时才算：node 约 50MB，其余都很小，算一遍远比跑校验脚本快。
+        return buildString {
+            verifiedCheckedFiles.forEach { file ->
+                append(file.name).append(':')
+                if (file.isFile) {
+                    append(file.length()).append(':').append(sha256Hex(file))
+                } else {
+                    append("<missing>")
+                }
+                append('\n')
+            }
+        }
+    }
+
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 20)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) {
+                    break
+                }
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private fun runAttempt(
