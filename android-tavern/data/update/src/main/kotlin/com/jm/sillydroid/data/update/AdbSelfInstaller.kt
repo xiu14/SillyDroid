@@ -84,8 +84,11 @@ internal object AdbSelfInstallCommand {
                 append("s=\$(sha256sum \"\$f\"); s=\${s%% *}; ")
                 append("[ \"\$s\" = '").append(sha).append("' ] || { echo \"").append(SHA_MISMATCH_MARKER).append(" \$s\"; exit 0; }; ")
             }
+            // pm install <路径> 是 system_server 自己去打开文件，SELinux 不让它读 /storage/emulated（fuse）；
+            // 由 shell 读文件、经管道交给 pm install -S（adb install 本身也是这么做的）。
             append("setsid nohup sh -c ")
-            append("'pm install -r \"\$1\" > ").append(LOG_PATH).append(" 2>&1 && am start -n \"\$2\" >> ").append(LOG_PATH).append(" 2>&1' ")
+            append("'n=\$(stat -c %s \"\$1\") && cat \"\$1\" | pm install -r -S \"\$n\" > ").append(LOG_PATH)
+            append(" 2>&1 && am start -n \"\$2\" >> ").append(LOG_PATH).append(" 2>&1' ")
             append("stdroid-install \"\$f\" '").append(launchComponent).append("' ")
             append("< /dev/null > /dev/null 2>&1 & ")
             append("echo ").append(STARTED_MARKER)

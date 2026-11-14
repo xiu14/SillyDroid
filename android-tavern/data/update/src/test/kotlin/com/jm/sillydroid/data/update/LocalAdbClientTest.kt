@@ -131,6 +131,8 @@ class LocalAdbClientTest {
         assertEquals(syntaxOutput, 0, syntaxCheck.waitFor())
         assertTrue(command.contains("e22a1cc2705cdb99e308fdb5950b7fbd3a1eb526064455ddb97cdd78802ea00e"))
         assertTrue(command.indexOf("sha256sum") < command.indexOf("pm install"))
+        // system_server 读不了 /storage/emulated 下的路径，必须经管道把内容交给 pm install -S。
+        assertTrue(command.contains("cat \"\$1\" | pm install -r -S \"\$n\""))
 
         // 读不到文件时只输出标记，不会执行安装。
         val missing = AdbSelfInstallCommand.build("/nonexistent/stdroid.apk", "", "a.b/c.D")
