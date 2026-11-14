@@ -274,7 +274,19 @@ bash scripts/stdroid-gha-build.sh publish --changelog-file notes.md   # 多行�
 - Release 先建成草稿，APK 和 `version.json` 传完才正式发布并设为 latest，App 不会拿到指向还没传完的文件的版本。
 - `version.json` 和 filesite 的格式一样（`versionCode`、`versionName`、`apkKey`=Release 资产名、`apkUrl`=固定 tag 的下载地址、`size`、`sha256`、`changelog`），由 `FilesiteVersionParser` 解析，`sha256` 由 workflow 计算。
 - 撤回某个版本：`gh release delete stdroid-v<name> -R xiu14/SillyDroid --cleanup-tag`，latest 会回落到上一个 Release；或者用 `gh release edit <上一个 tag> --latest` 把上一个版本重新设为 latest。
-- Release 的 tag 指向 `ci/stdroid` 上的快照提交，内容和当时的 HEAD 一致；`custom/st-shell` 分支仍然只在用户要求推送时推。
+- Release 的 tag 指向 `ci/stdroid` 上的快照提交，内容和当时的 HEAD 一致；`custom/st-shell` 分支仍然只在用户要求推送时推。`ci/stdroid` 的快照以 HEAD 为父提交，本地提交会随构建一起上 GitHub，不用为了备份去推 `custom/st-shell`，也不用每次提醒用户它没推。
+
+### 应用内更新的安装方式：本机 adb 自安装
+
+ColorOS 用系统安装器装未认证开发者的 APK，每次都要确认风险、输入密码；用 adb（shell 身份）装不走这套检测。所以下载完、SHA-256 校验通过后，App 自己当 adb 客户端连本机 adbd 去装（`data/update` 的 `LocalAdbClient` / `AdbSelfInstaller.kt`，调用方是 `AppUpdateDownloadService` 和关于页的「安装」按钮）：
+
+- 连 `127.0.0.1:5555`。X8 的 adbd 常开 TCP 5555（见 `/root/workspace/连x8.md`），手机重启后要先 `x8up` 才有。连不上、授权被拒或超时，就退回系统安装器和「可安装」通知。
+- 第一次连会弹「允许 USB 调试」，勾选「一律允许」后不再弹。认证私钥放在 Android Keystore（alias `stdroid-self-update-adb`，不可导出）：酒馆服务端插件和 App 是同一个 uid，私钥要是落成文件，插件就能读走它拿到 adb shell。在开发者选项里「撤销 USB 调试授权」会把它和 VPS、Termux 的授权一起清掉。
+- 必须走 **shell_v2**（`shell,v2,raw:`）。老式 `shell:` 原始通道在连接断开时，adbd 会把这次会话起的后台进程全杀掉，setsid / nohup 都拦不住。
+- 必须**经管道**交给 `pm install -S <大小>`。`pm install <路径>` 是 system_server 自己按路径打开文件，SELinux 不让它读 `/storage/emulated`（fuse）。
+- 命令先在 shell 端重算 SHA-256，对上了才 `setsid nohup` 后台执行 `pm install`，装完 `am start` 重新打开 App。安装日志在手机的 `/data/local/tmp/stdroid-adb-install.log`，App 侧的事件记在 host 诊断日志 `category=app_update`（`adb_install_started` / `adb_install_unavailable` / `adb_install_not_finished`）。
+- 交给 adb 后服务等 120 秒，进程还活着就说明没装上，退回「可安装」通知。X8 上实测从交给 adb 到装完约 2 秒。
+- 安装逻辑只在**执行安装的那个版本**里生效：改了这块代码后，要先把新版本用 VPS 的 adb 直接装到手机上，再发一个更高的版本，才能在 App 里测到改动（这需要先征得用户同意）。
 
 ## Stdroid JS-Slash-Runner 导入 API
 
