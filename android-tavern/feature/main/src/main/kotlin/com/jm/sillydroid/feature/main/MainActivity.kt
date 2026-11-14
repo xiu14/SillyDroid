@@ -20,7 +20,6 @@ import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.webkit.WebViewCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.jm.sillydroid.core.model.logs.HostLogBundleUploadRequestConfig
@@ -1137,30 +1136,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     // 远程编辑（测试版）改完文件后由 sidecar 发出刷新请求；页面不刷新的话 ST 前端可能把旧设置写回去。
-    // 只在前台长轮询；切回前台时用上次的序号补收后台期间的刷新请求。未配对时 30 秒问一次。
+    // 页面能刷新时才发长轮询：Activity 至少 STARTED，或者浏览器挂在后台悬浮窗里（coordinator.state == OVERLAY；
+    // 挂进悬浮窗时 WebView 保持原尺寸并且 VISIBLE，reloadTavernUiIfPossible 照样能执行）。
+    // 两种情况都不是时，每 1.5 秒看一次状态，不发长轮询；等能刷新了，用上次的序号补收这段时间里的刷新请求。
+    // 长轮询期间状态变成不能刷新时，收到的新序号不算数（lastSeq 不前进），留到能刷新时补收。
+    // 整个监听只有一个协程，不随前后台切换重启，同一时间最多一个长轮询。请求失败 10 秒后重试；未配对时 30 秒问一次。
+    // 已知不处理：系统回收了 Activity、只剩悬浮窗时，监听随 lifecycleScope 一起结束，Activity 重建后才恢复。
     private fun startRemoteEditReloadWatcher() {
         if (remoteEditReloadJob?.isActive == true) {
             return
         }
         val repository = appGraph.remoteBackupRepository
         var lastSeq = -1L
+        fun canReloadTavernUi(): Boolean =
+            lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) ||
+                floatingBrowserRuntime.coordinator.state == FloatingBrowserAttachmentState.OVERLAY
         remoteEditReloadJob = lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                while (true) {
-                    val signal = withContext(appGraph.dispatchers.io) {
-                        runCatching { repository.waitRemoteEditReload(lastSeq) }.getOrNull()
-                    }
-                    if (signal == null) {
-                        delay(remoteEditReloadRetryMs)
+            while (true) {
+                if (!canReloadTavernUi()) {
+                    delay(remoteEditStateCheckMs)
+                    continue
+                }
+                val signal = withContext(appGraph.dispatchers.io) {
+                    runCatching { repository.waitRemoteEditReload(lastSeq) }.getOrNull()
+                }
+                if (signal == null) {
+                    delay(remoteEditReloadRetryMs)
+                    continue
+                }
+                if (lastSeq >= 0 && signal.seq > lastSeq) {
+                    if (!canReloadTavernUi()) {
                         continue
                     }
-                    if (lastSeq >= 0 && signal.seq > lastSeq) {
-                        browserHost.reloadTavernUiIfPossible(processManager.currentSnapshot())
-                    }
-                    lastSeq = signal.seq
-                    if (!signal.active) {
-                        delay(remoteEditIdlePollMs)
-                    }
+                    browserHost.reloadTavernUiIfPossible(processManager.currentSnapshot())
+                }
+                lastSeq = signal.seq
+                if (!signal.active) {
+                    delay(remoteEditIdlePollMs)
                 }
             }
         }
@@ -1245,5 +1257,6 @@ class MainActivity : AppCompatActivity() {
         private const val remoteBackupAutoRetryThrottleMs = 5L * 60L * 1000L
         private const val remoteEditReloadRetryMs = 10_000L
         private const val remoteEditIdlePollMs = 30_000L
+        private const val remoteEditStateCheckMs = 1_500L
     }
 }
