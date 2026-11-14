@@ -60,7 +60,7 @@ class LocalAdbClientTest {
         server.join()
         assertEquals("STDROID_INSTALL_STARTED\n", output)
         assertEquals(1, authorizationRequests.size)
-        assertEquals("shell:echo hi", server.openedService.get())
+        assertEquals("shell,v2,raw:echo hi", server.openedService.get())
         assertTrue(server.receivedPublicKey.get())
         assertTrue(server.clientClosedStream.get())
     }
@@ -78,6 +78,30 @@ class LocalAdbClientTest {
         assertEquals("ok", output)
         assertFalse(prompted)
         assertFalse(server.receivedPublicKey.get())
+    }
+
+    @Test
+    fun `falls back to legacy shell service when device lacks shell_v2`() {
+        val authorizedKeys = mutableSetOf(signer.publicKey.modulus)
+        val server = FakeAdbd(authorizedKeys = authorizedKeys, userAllows = false, shellOutput = "legacy", shellV2 = false)
+        server.start()
+
+        val output = LocalAdbClient(signer, "stdroid@test", port = server.port).shell("true")
+
+        server.join()
+        assertEquals("legacy", output)
+        assertEquals("shell:true", server.openedService.get())
+    }
+
+    @Test
+    fun `shell v2 output keeps stdout and stderr and drops exit packet`() {
+        val raw = shellV2Packet(1, "out\n".toByteArray()) + shellV2Packet(2, "err\n".toByteArray()) + shellV2Packet(3, byteArrayOf(0))
+        assertEquals("out\nerr\n", LocalAdbClient.decodeShellV2Output(raw))
+        assertEquals(
+            setOf("shell_v2", "cmd"),
+            LocalAdbClient.parseDeviceFeatures("device::ro.product.name=x;ro.product.model=y;features=shell_v2,cmd\u0000")
+        )
+        assertTrue(LocalAdbClient.parseDeviceFeatures("device::\u0000").isEmpty())
     }
 
     @Test
@@ -127,6 +151,14 @@ class LocalAdbClientTest {
         assertTrue(AdbSelfInstallCommand.parse("") is AppUpdateAdbInstallResult.Unavailable)
     }
 
+    private fun shellV2Packet(id: Int, data: ByteArray): ByteArray {
+        return ByteBuffer.allocate(5 + data.size).order(ByteOrder.LITTLE_ENDIAN)
+            .put(id.toByte())
+            .putInt(data.size)
+            .put(data)
+            .array()
+    }
+
     private fun decodeAdbPublicKeyModulus(base64: String): BigInteger {
         val bytes = Base64.getDecoder().decode(base64)
         assertEquals(4 + 4 + 256 + 256 + 4, bytes.size)
@@ -152,7 +184,8 @@ class LocalAdbClientTest {
     private inner class FakeAdbd(
         private val authorizedKeys: MutableSet<BigInteger>,
         private val userAllows: Boolean,
-        private val shellOutput: String
+        private val shellOutput: String,
+        private val shellV2: Boolean = true
     ) {
         private val serverSocket = ServerSocket(0)
         val port: Int = serverSocket.localPort
@@ -214,7 +247,9 @@ class LocalAdbClientTest {
                     else -> throw AssertionError("unexpected AUTH type ${auth.arg0}")
                 }
             }
-            LocalAdbClient.writeMessage(output, LocalAdbClient.CMD_CNXN, LocalAdbClient.ADB_VERSION, 4096, "device::\u0000".toByteArray())
+            assertTrue(String(hello.payload, Charsets.UTF_8).contains("features=shell_v2"))
+            val banner = if (shellV2) "device::ro.product.name=fake;features=shell_v2,cmd\u0000" else "device::\u0000"
+            LocalAdbClient.writeMessage(output, LocalAdbClient.CMD_CNXN, LocalAdbClient.ADB_VERSION, 4096, banner.toByteArray())
 
             val open = LocalAdbClient.readMessage(input)
             assertEquals(LocalAdbClient.CMD_OPEN, open.command)
@@ -222,8 +257,16 @@ class LocalAdbClientTest {
             val clientId = open.arg0
             val serverId = 7
             LocalAdbClient.writeMessage(output, LocalAdbClient.CMD_OKAY, serverId, clientId, ByteArray(0))
-            if (shellOutput.isNotEmpty()) {
-                LocalAdbClient.writeMessage(output, LocalAdbClient.CMD_WRTE, serverId, clientId, shellOutput.toByteArray())
+            val chunks = if (shellV2) {
+                // v2 包故意拆成两次 WRTE 发，模拟一个包跨消息的情况。
+                val packets = (if (shellOutput.isNotEmpty()) shellV2Packet(1, shellOutput.toByteArray()) else ByteArray(0)) +
+                    shellV2Packet(3, byteArrayOf(0))
+                listOf(packets.copyOfRange(0, 3), packets.copyOfRange(3, packets.size))
+            } else {
+                listOf(shellOutput.toByteArray()).filter { chunk -> chunk.isNotEmpty() }
+            }
+            for (chunk in chunks) {
+                LocalAdbClient.writeMessage(output, LocalAdbClient.CMD_WRTE, serverId, clientId, chunk)
                 val ack = LocalAdbClient.readMessage(input)
                 assertEquals(LocalAdbClient.CMD_OKAY, ack.command)
             }

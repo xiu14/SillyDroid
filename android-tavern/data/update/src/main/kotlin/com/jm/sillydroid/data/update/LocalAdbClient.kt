@@ -26,6 +26,8 @@ internal class AdbAuthorizationException(message: String) : IOException(message)
 /**
  * 最小的 adb 客户端：直连本机 adbd 的 TCP 端口（默认 127.0.0.1:5555），认证后执行一条 shell 命令并读回输出。
  * 只实现自更新需要的部分：CNXN / AUTH / OPEN / WRTE / OKAY / CLSE，不支持 TLS（无线调试的配对端口）。
+ * 设备支持时用 shell_v2（`shell,v2,raw:`）：老式 `shell:` 原始通道在命令退出、连接断开时，
+ * adbd 会把这次会话里起的后台进程一起杀掉（setsid/nohup 也拦不住），后台 pm install 根本跑不起来。
  * 第一次用某个公钥连接时，手机会弹出「允许 USB 调试吗？」，用户勾选「一律允许」后以后不再询问。
  */
 internal class LocalAdbClient(
@@ -49,10 +51,13 @@ internal class LocalAdbClient(
             val input = DataInputStream(socket.getInputStream().buffered())
             val output = socket.getOutputStream()
 
-            writeMessage(output, CMD_CNXN, ADB_VERSION, MAX_PAYLOAD, "host::\u0000".toByteArray(Charsets.UTF_8))
-            authenticate(socket, input, output, onAuthorizationRequested)
+            writeMessage(output, CMD_CNXN, ADB_VERSION, MAX_PAYLOAD, HOST_BANNER.toByteArray(Charsets.UTF_8))
+            val deviceBanner = authenticate(socket, input, output, onAuthorizationRequested)
             socket.soTimeout = readTimeoutMillis
-            return runShell(input, output, command)
+            val shellV2 = parseDeviceFeatures(deviceBanner).contains(FEATURE_SHELL_V2)
+            val service = if (shellV2) "shell,v2,raw:$command" else "shell:$command"
+            val raw = runService(input, output, service)
+            return if (shellV2) decodeShellV2Output(raw) else raw.toString(Charsets.UTF_8)
         }
     }
 
@@ -61,7 +66,7 @@ internal class LocalAdbClient(
         input: DataInputStream,
         output: java.io.OutputStream,
         onAuthorizationRequested: () -> Unit
-    ) {
+    ): String {
         var signatureSent = false
         var publicKeySent = false
         while (true) {
@@ -77,7 +82,7 @@ internal class LocalAdbClient(
                 )
             }
             when (message.command) {
-                CMD_CNXN -> return
+                CMD_CNXN -> return String(message.payload, Charsets.UTF_8)
                 CMD_STLS -> throw IOException("adbd 要求 TLS（无线调试端口），这里只支持 adb tcpip 端口")
                 CMD_AUTH -> {
                     if (message.arg0 != AUTH_TOKEN) {
@@ -106,17 +111,17 @@ internal class LocalAdbClient(
         }
     }
 
-    private fun runShell(input: DataInputStream, output: java.io.OutputStream, command: String): String {
+    private fun runService(input: DataInputStream, output: java.io.OutputStream, service: String): ByteArray {
         val localId = 1
         var remoteId = 0
-        writeMessage(output, CMD_OPEN, localId, 0, "shell:$command\u0000".toByteArray(Charsets.UTF_8))
+        writeMessage(output, CMD_OPEN, localId, 0, "$service\u0000".toByteArray(Charsets.UTF_8))
         val result = ByteArrayOutputStream()
         while (true) {
             val message = try {
                 readMessage(input)
             } catch (error: EOFException) {
                 // adbd 关连接前没发 CLSE：已经拿到的输出照样返回。
-                return result.toString(Charsets.UTF_8.name())
+                return result.toByteArray()
             }
             if (message.arg1 != localId) {
                 continue
@@ -134,7 +139,7 @@ internal class LocalAdbClient(
                         throw IOException("adbd 拒绝打开 shell 服务")
                     }
                     writeMessage(output, CMD_CLSE, localId, remoteId, ByteArray(0))
-                    return result.toString(Charsets.UTF_8.name())
+                    return result.toByteArray()
                 }
             }
         }
@@ -159,6 +164,10 @@ internal class LocalAdbClient(
         const val AUTH_SIGNATURE = 2
         const val AUTH_RSAPUBLICKEY = 3
         const val ADB_VERSION = 0x01000001
+        const val FEATURE_SHELL_V2 = "shell_v2"
+        const val HOST_BANNER = "host::features=shell_v2\u0000"
+        const val SHELL_V2_STDOUT = 1
+        const val SHELL_V2_STDERR = 2
         const val MAX_PAYLOAD = 256 * 1024
         private const val HEADER_SIZE = 24
         private const val MAX_ACCEPTED_PAYLOAD = 1024 * 1024
@@ -197,6 +206,37 @@ internal class LocalAdbClient(
             val payload = ByteArray(length)
             input.readFully(payload)
             return AdbMessage(command, arg0, arg1, payload)
+        }
+
+        /** 设备 CNXN 横幅形如 `device::ro.product.name=x;features=shell_v2,cmd,...`。 */
+        fun parseDeviceFeatures(banner: String): Set<String> {
+            val properties = banner.trimEnd('\u0000').substringAfter("::", "")
+            return properties.split(';')
+                .firstOrNull { entry -> entry.startsWith("features=") }
+                ?.removePrefix("features=")
+                ?.split(',')
+                ?.filter { feature -> feature.isNotBlank() }
+                ?.toSet()
+                .orEmpty()
+        }
+
+        /** shell_v2 输出是一串「1 字节流 id + 4 字节小端长度 + 数据」的包；只取 stdout / stderr。 */
+        fun decodeShellV2Output(raw: ByteArray): String {
+            val text = ByteArrayOutputStream()
+            var offset = 0
+            while (offset + 5 <= raw.size) {
+                val id = raw[offset].toInt() and 0xff
+                val length = ByteBuffer.wrap(raw, offset + 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                val start = offset + 5
+                if (length < 0 || start + length > raw.size) {
+                    break
+                }
+                if (id == SHELL_V2_STDOUT || id == SHELL_V2_STDERR) {
+                    text.write(raw, start, length)
+                }
+                offset = start + length
+            }
+            return text.toString(Charsets.UTF_8.name())
         }
 
         /** Android adbd 的公钥格式（mincrypt RSAPublicKey 结构的 base64 + 空格 + 名字），见 adb 源码 android_pubkey.cpp。 */
