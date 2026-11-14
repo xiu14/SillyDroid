@@ -131,8 +131,14 @@ class HostNotificationServiceImpl(
     }
 
     override fun remove(notificationKey: String) {
-        val notificationTarget = resolveStoredNotificationTarget(notificationKey) ?: resolveNotificationTarget(notificationKey)
-        notificationManagerCompat.cancel(notificationTarget.tag, notificationTarget.id)
+        // 记录的目标和按 key 推出来的默认目标都取消一遍：同一个 key 以前可能先后用过前台通知 id 和普通 tag/id，
+        // 只取消记录里的那个会漏掉另一个（旧版本更新下载完残留的「下载中」就是这样来的）。
+        val storedTarget = resolveStoredNotificationTarget(notificationKey)
+        val defaultTarget = resolveNotificationTarget(notificationKey)
+        storedTarget?.let { target -> notificationManagerCompat.cancel(target.tag, target.id) }
+        if (storedTarget != defaultTarget) {
+            notificationManagerCompat.cancel(defaultTarget.tag, defaultTarget.id)
+        }
         foregroundPostStates.remove(notificationKey)
         stateStore.markRemoved(notificationKey)
     }

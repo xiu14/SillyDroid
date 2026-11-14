@@ -28,7 +28,9 @@ class AppUpdateDownloadService : Service() {
     companion object {
         private const val LOG_TAG = "SillyDroidUpdate"
         private const val ACTION_START = "com.jm.sillydroid.action.UPDATE_DOWNLOAD_START"
-        private const val foregroundNotificationKey = "app-update-download"
+        // 不能和 HostDownloadNotificationCoordinator 的 "app-update-download" 共用一个 key：
+        // 通知服务按 key 记录实际发出的 tag/id，共用时两边互相覆盖，下载完会删错、残留一条「下载中」。
+        private const val foregroundNotificationKey = "app-update-download-foreground"
         private const val foregroundNotificationId = 12038
 
         fun createStartIntent(context: Context): Intent {
@@ -103,11 +105,17 @@ class AppUpdateDownloadService : Service() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        // 下载结果（可安装 / 失败）由 HostDownloadNotificationCoordinator 另发通知；
+        // 前台进度通知要一起移掉，不能 DETACH 留下一条停在原地的「下载中」。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_DETACH)
+            stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
-            stopForeground(false)
+            stopForeground(true)
+        }
+        runCatching {
+            (applicationContext as SillyDroidAppGraphProvider).sillyDroidAppGraph
+                .hostNotificationService.remove(foregroundNotificationKey)
         }
         super.onDestroy()
     }

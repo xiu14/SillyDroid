@@ -1329,6 +1329,13 @@
                             android:textColor="?attr/colorOnSurfaceVariant"
                             android:textSize="10sp" />
 
+                        <com.google.android.material.progressindicator.LinearProgressIndicator
+                            android:id="@+id/bootstrapSettingsAboutUpdateProgress"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sillydroid_space_xs"
+                            android:visibility="gone" />
+
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/bootstrapSettingsAboutUpdateButton"
                             style="@style/Widget.SillyDroid.SettingsButton.Outlined"

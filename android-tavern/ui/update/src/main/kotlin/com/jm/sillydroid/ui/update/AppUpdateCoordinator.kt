@@ -25,7 +25,10 @@ import com.jm.sillydroid.domain.notification.HostDownloadNotificationCoordinator
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 import com.jm.sillydroid.ui.update.R
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -51,7 +54,8 @@ class AppUpdateCoordinator(
     data class AboutUi(
         val versionView: TextView,
         val statusView: TextView,
-        val actionButton: MaterialButton
+        val actionButton: MaterialButton,
+        val progressView: LinearProgressIndicator? = null
     )
 
     private data class AboutVersionInfo(
@@ -63,9 +67,12 @@ class AppUpdateCoordinator(
 
     companion object {
         private const val apkMimeType = "application/vnd.android.package-archive"
+        private const val downloadProgressRefreshMillis = 1_000L
+        private const val bytesPerMegabyte = 1024.0 * 1024.0
     }
 
     private var syncJob: Job? = null
+    private var downloadProgressJob: Job? = null
 
     fun initialize() {
         clearInstalledVersionState()
@@ -90,14 +97,92 @@ class AppUpdateCoordinator(
             syncCachedReleaseDownloadStateOnIo(verifyCompleteApk = true)
             checkForUpdatesOnStart()
         }
+        startDownloadProgressRefresh()
     }
 
     override fun onStop(owner: LifecycleOwner) {
+        downloadProgressJob?.cancel()
+        downloadProgressJob = null
     }
 
     override fun onDestroy(owner: LifecycleOwner) {
         syncJob?.cancel()
         syncJob = null
+        downloadProgressJob?.cancel()
+        downloadProgressJob = null
+    }
+
+    // 下载由 AppUpdateDownloadService 在后台进行，进度每秒写进 stateStore；关于页可见时每秒重绘一次，
+    // 进度条和百分比才会动。下载结束后再重绘一次，切到「可安装」或「失败」状态。
+    private fun startDownloadProgressRefresh() {
+        if (aboutUi == null) {
+            return
+        }
+        downloadProgressJob?.cancel()
+        downloadProgressJob = activity.lifecycleScope.launch {
+            var wasDownloading = false
+            while (isActive) {
+                delay(downloadProgressRefreshMillis)
+                val downloading = appUpdateRepository.cachedDownloadState()?.isDownloadInProgress() == true
+                if (downloading || wasDownloading) {
+                    renderState()
+                }
+                wasDownloading = downloading
+            }
+        }
+    }
+
+    private fun AppDownloadState.isDownloadInProgress(): Boolean {
+        return status == AppDownloadStatus.DOWNLOADING ||
+            status == AppDownloadStatus.PENDING ||
+            status == AppDownloadStatus.PAUSED ||
+            status == AppDownloadStatus.RUNNING
+    }
+
+    private fun formatMegabytes(bytes: Long): String {
+        return String.format(Locale.US, "%.1f MB", bytes.coerceAtLeast(0L) / bytesPerMegabyte)
+    }
+
+    private fun formatDownloadProgress(state: AppDownloadState): String? {
+        val downloadedBytes = state.downloadedBytes.coerceAtLeast(0L)
+        val totalBytes = state.totalBytes?.takeIf { value -> value > 0L }
+        if (totalBytes == null) {
+            return if (downloadedBytes > 0L) {
+                activity.getString(R.string.app_update_download_progress_unknown_total, formatMegabytes(downloadedBytes))
+            } else {
+                null
+            }
+        }
+        val percent = ((downloadedBytes.coerceAtMost(totalBytes) * 100L) / totalBytes).toInt()
+        return activity.getString(
+            R.string.app_update_download_progress,
+            percent,
+            formatMegabytes(downloadedBytes.coerceAtMost(totalBytes)),
+            formatMegabytes(totalBytes)
+        )
+    }
+
+    private fun renderDownloadProgress(progressView: LinearProgressIndicator, state: AppDownloadState?) {
+        if (state == null ||
+            state.verifiedReadyToInstall ||
+            !(state.isDownloadInProgress() || (state.resumable && state.downloadedBytes > 0L))
+        ) {
+            progressView.isVisible = false
+            return
+        }
+        val totalBytes = state.totalBytes?.takeIf { value -> value > 0L }
+        val indeterminate = totalBytes == null
+        if (progressView.isIndeterminate != indeterminate) {
+            // LinearProgressIndicator 可见时切换确定/不确定模式会被忽略，先隐藏再切。
+            progressView.isVisible = false
+            progressView.isIndeterminate = indeterminate
+        }
+        if (totalBytes != null) {
+            val permille = ((state.downloadedBytes.coerceIn(0L, totalBytes) * 1000L) / totalBytes).toInt()
+            progressView.max = 1000
+            progressView.setProgressCompat(permille, true)
+        }
+        progressView.isVisible = true
     }
 
     private suspend fun handleUpdateAction() {
@@ -214,10 +299,15 @@ class AppUpdateCoordinator(
 
         when (queryDownloadStatus(currentDownload.downloadId)) {
             AppDownloadStatus.DOWNLOADING,
-            AppDownloadStatus.RESUMABLE,
             AppDownloadStatus.PENDING,
             AppDownloadStatus.PAUSED,
             AppDownloadStatus.RUNNING -> {
+                // 下载中的进度通知由 AppUpdateDownloadService 的前台通知负责（每秒更新）；
+                // 这里再发一条只会多出一条不会动的「下载中」，下载完还可能残留。
+                renderState()
+            }
+
+            AppDownloadStatus.RESUMABLE -> {
                 hostDownloadNotificationCoordinator.refreshAppUpdateDownload(currentDownload)
                 renderState()
             }
@@ -393,7 +483,7 @@ class AppUpdateCoordinator(
                 }
 
                 currentDownload != null -> {
-                    statusText = activity.getString(
+                    val baseStatusText = activity.getString(
                         if (currentDownload.resumable &&
                             (currentDownload.status == AppDownloadStatus.RESUMABLE ||
                                 currentDownload.status == AppDownloadStatus.FAILED ||
@@ -405,6 +495,9 @@ class AppUpdateCoordinator(
                         },
                         currentDownload.versionName
                     )
+                    statusText = formatDownloadProgress(currentDownload)
+                        ?.let { progressText -> baseStatusText + "\n" + progressText }
+                        ?: baseStatusText
                     actionText = if (currentDownload.resumable &&
                         (currentDownload.status == AppDownloadStatus.RESUMABLE ||
                             currentDownload.status == AppDownloadStatus.FAILED ||
@@ -451,6 +544,7 @@ class AppUpdateCoordinator(
             ui.statusView.text = statusText
             ui.actionButton.text = actionText
             ui.actionButton.isEnabled = actionEnabled
+            ui.progressView?.let { progressView -> renderDownloadProgress(progressView, currentDownload) }
         }
     }
 

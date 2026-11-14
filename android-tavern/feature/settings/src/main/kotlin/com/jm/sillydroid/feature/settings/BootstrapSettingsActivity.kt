@@ -199,6 +199,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
     private lateinit var aboutGithubButton: ImageButton
     private lateinit var aboutVersionView: TextView
     private lateinit var aboutUpdateStatusView: TextView
+    private lateinit var aboutUpdateProgressView: LinearProgressIndicator
     private lateinit var aboutUpdateButton: MaterialButton
     private lateinit var aboutCrashUploadSwitch: MaterialSwitch
     private lateinit var sectionContainer: LinearLayout
@@ -495,6 +496,7 @@ class BootstrapSettingsActivity : AppCompatActivity() {
         aboutGithubButton = findViewById(R.id.bootstrapSettingsAboutGithubButton)
         aboutVersionView = findViewById(R.id.bootstrapSettingsAboutVersion)
         aboutUpdateStatusView = findViewById(R.id.bootstrapSettingsAboutUpdateStatus)
+        aboutUpdateProgressView = findViewById(R.id.bootstrapSettingsAboutUpdateProgress)
         aboutUpdateButton = findViewById(R.id.bootstrapSettingsAboutUpdateButton)
         aboutCrashUploadSwitch = findViewById(R.id.bootstrapSettingsAboutCrashUploadSwitch)
         sectionContainer = findViewById(R.id.bootstrapSettingsSectionContainer)
@@ -653,7 +655,8 @@ class BootstrapSettingsActivity : AppCompatActivity() {
             aboutUi = AppUpdateCoordinator.AboutUi(
                 versionView = aboutVersionView,
                 statusView = aboutUpdateStatusView,
-                actionButton = aboutUpdateButton
+                actionButton = aboutUpdateButton,
+                progressView = aboutUpdateProgressView
             )
         )
         formController = BootstrapSettingsFormController(
