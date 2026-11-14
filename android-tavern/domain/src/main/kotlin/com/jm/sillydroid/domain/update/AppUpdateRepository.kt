@@ -30,6 +30,22 @@ interface AppUpdateRepository {
      * 首次调用返回 true，同一 downloadId 在去重窗口内的后续调用返回 false。
      */
     fun claimInstallerLaunch(downloadId: Long): Boolean
+
+    /**
+     * 通过本机 adb（127.0.0.1:5555，shell 身份）安装已校验的更新包，不经过系统安装器的风险确认。
+     * 阻塞调用，要在 IO 线程执行；第一次会在手机上弹「允许 USB 调试」，[onAuthorizationRequested] 在弹框前回调。
+     * 返回 [AppUpdateAdbInstallResult.Started] 时安装已在后台开始，App 随后会被系统结束并自动重新打开。
+     */
+    fun installWithLocalAdb(
+        downloadState: AppDownloadState,
+        onAuthorizationRequested: () -> Unit = {}
+    ): AppUpdateAdbInstallResult = AppUpdateAdbInstallResult.Unavailable("当前实现不支持 adb 安装")
+}
+
+sealed interface AppUpdateAdbInstallResult {
+    object Started : AppUpdateAdbInstallResult
+
+    data class Unavailable(val reason: String) : AppUpdateAdbInstallResult
 }
 
 interface AppUpdateStateRepository {

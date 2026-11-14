@@ -14,8 +14,11 @@ import com.jm.sillydroid.core.model.notification.HostNotificationKind
 import com.jm.sillydroid.core.model.notification.HostNotificationProgress
 import com.jm.sillydroid.core.model.notification.HostNotificationSpec
 import com.jm.sillydroid.core.model.notification.HostNotificationTapSpec
+import com.jm.sillydroid.core.model.update.AppDownloadState
 import com.jm.sillydroid.core.model.update.AppDownloadStatus
+import com.jm.sillydroid.domain.app.SillyDroidAppGraph
 import com.jm.sillydroid.domain.app.SillyDroidAppGraphProvider
+import com.jm.sillydroid.domain.update.AppUpdateAdbInstallResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +35,8 @@ class AppUpdateDownloadService : Service() {
         // 通知服务按 key 记录实际发出的 tag/id，共用时两边互相覆盖，下载完会删错、残留一条「下载中」。
         private const val foregroundNotificationKey = "app-update-download-foreground"
         private const val foregroundNotificationId = 12038
+        // pm install 一个 330MB 的包加 am start，X8 上一般二三十秒；留足余量再判定 adb 安装失败。
+        private const val adbInstallGraceMillis = 120_000L
 
         fun createStartIntent(context: Context): Intent {
             return Intent(context, AppUpdateDownloadService::class.java).apply {
@@ -84,6 +89,14 @@ class AppUpdateDownloadService : Service() {
             }
             val finalState = graph.appUpdateRepository.startOrResumeDownload(release)
             notificationJob.cancel()
+            if (finalState.verifiedReadyToInstall && installWithLocalAdb(graph, finalState)) {
+                // 安装成功时进程已经被系统结束，走不到这里；还活着说明 pm install 没成功，退回系统安装器。
+                graph.hostLogRepository.recordHostDiagnostic(
+                    category = "app_update",
+                    body = "event=adb_install_not_finished version=${finalState.versionName} " +
+                        "waitedMs=$adbInstallGraceMillis log=/data/local/tmp/stdroid-adb-install.log"
+                )
+            }
             graph.hostDownloadNotificationCoordinator.refreshAppUpdateDownload(finalState)
             if (finalState.verifiedReadyToInstall) {
                 graph.hostDownloadNotificationCoordinator.postAppUpdateReadyToInstall(
@@ -101,6 +114,42 @@ class AppUpdateDownloadService : Service() {
             stopSelf(startId)
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * 用本机 adb 直接安装（不走系统安装器的风险确认和密码）。交给 adb 后等一段时间：安装提交时系统会结束本进程，
+     * 装完由 am start 重新打开 App。返回 true 表示已交给 adb 但等完了进程还在（安装没成功）；
+     * 返回 false 表示 adb 不可用，调用方直接退回系统安装器。
+     */
+    private suspend fun installWithLocalAdb(graph: SillyDroidAppGraph, state: AppDownloadState): Boolean {
+        graph.hostNotificationService.postForeground(
+            this,
+            buildForegroundSpec("“${state.versionName}”已下载，正在通过本机 adb 安装，完成后会自动重新打开。", null, true)
+        )
+        val result = graph.appUpdateRepository.installWithLocalAdb(state) {
+            graph.hostNotificationService.postForeground(
+                this,
+                buildForegroundSpec("请在系统弹窗里允许 USB 调试（勾选「一律允许」），之后会自动安装更新。", null, true)
+            )
+        }
+        return when (result) {
+            AppUpdateAdbInstallResult.Started -> {
+                graph.hostLogRepository.recordHostDiagnostic(
+                    category = "app_update",
+                    body = "event=adb_install_started version=${state.versionName}"
+                )
+                delay(adbInstallGraceMillis)
+                true
+            }
+
+            is AppUpdateAdbInstallResult.Unavailable -> {
+                graph.hostLogRepository.recordHostDiagnostic(
+                    category = "app_update",
+                    body = "event=adb_install_unavailable version=${state.versionName} reason=${result.reason.replace('\n', ' ')}"
+                )
+                false
+            }
+        }
     }
 
     override fun onDestroy() {

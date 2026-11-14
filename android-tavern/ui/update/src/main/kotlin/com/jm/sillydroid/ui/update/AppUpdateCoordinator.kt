@@ -22,6 +22,7 @@ import com.jm.sillydroid.core.model.update.AppUpdateRequestConfig
 import com.jm.sillydroid.core.model.update.AvailableAppRelease
 import com.jm.sillydroid.domain.bootstrap.RuntimeMetadataRepository
 import com.jm.sillydroid.domain.notification.HostDownloadNotificationCoordinator
+import com.jm.sillydroid.domain.update.AppUpdateAdbInstallResult
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 import com.jm.sillydroid.ui.update.R
 import com.google.android.material.button.MaterialButton
@@ -369,7 +370,31 @@ class AppUpdateCoordinator(
                 activity.packageManager.canRequestPackageInstalls()
         )
         if (openInstallerIfReady) {
+            if (startLocalAdbInstall(currentState)) {
+                return
+            }
             openVerifiedDownload(currentState)
+        }
+    }
+
+    // 先试本机 adb：adb 装的包不走系统安装器的风险确认和密码；adb 不可用（手机重启后没开 5555、拒绝授权等）再退回安装器。
+    private suspend fun startLocalAdbInstall(downloadState: AppDownloadState): Boolean {
+        showMessage(R.string.app_update_adb_install_trying)
+        val result = withContext(dispatchers.io) {
+            appUpdateRepository.installWithLocalAdb(downloadState) {
+                activity.runOnUiThread { showMessage(R.string.app_update_adb_install_authorize) }
+            }
+        }
+        return when (result) {
+            AppUpdateAdbInstallResult.Started -> {
+                showMessage(R.string.app_update_adb_install_started)
+                true
+            }
+
+            is AppUpdateAdbInstallResult.Unavailable -> {
+                showMessage(activity.getString(R.string.app_update_adb_install_unavailable, result.reason))
+                false
+            }
         }
     }
 

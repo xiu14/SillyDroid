@@ -9,6 +9,7 @@ import com.jm.sillydroid.core.model.update.AppDownloadStatus
 import com.jm.sillydroid.core.model.update.AppUpdateRequestConfig
 import com.jm.sillydroid.core.model.update.AvailableAppRelease
 import com.jm.sillydroid.domain.update.AppDownloadCacheCleanupResult
+import com.jm.sillydroid.domain.update.AppUpdateAdbInstallResult
 import com.jm.sillydroid.domain.update.AppUpdateRepository
 import java.io.File
 import java.io.IOException
@@ -323,6 +324,47 @@ class AppUpdateRepositoryImpl(
         stateStore.downloadState = null
     }
 
+    override fun installWithLocalAdb(
+        downloadState: AppDownloadState,
+        onAuthorizationRequested: () -> Unit
+    ): AppUpdateAdbInstallResult {
+        synchronized(adbInstallLock) {
+            // 下载服务自动安装和用户点「安装」可能前后脚触发；已经交给 adb 的安装不再重复发起。
+            if (System.currentTimeMillis() - lastAdbInstallStartedAtMillis < adbInstallInFlightWindowMillis) {
+                return AppUpdateAdbInstallResult.Started
+            }
+        }
+        val apkFile = File(downloadedApkPath(downloadState))
+        if (!apkFile.isFile) {
+            return AppUpdateAdbInstallResult.Unavailable("更新包不存在：${apkFile.absolutePath}")
+        }
+        val launchComponent = appContext.packageManager
+            .getLaunchIntentForPackage(appContext.packageName)
+            ?.component
+            ?.flattenToString()
+            ?: return AppUpdateAdbInstallResult.Unavailable("找不到 App 的启动入口")
+        return try {
+            val command = AdbSelfInstallCommand.build(
+                apkPath = apkFile.absolutePath,
+                expectedSha256 = downloadState.apkSha256,
+                launchComponent = launchComponent
+            )
+            val output = LocalAdbClient(
+                signer = AndroidKeyStoreAdbSigner(),
+                publicKeyName = "stdroid-self-update@${appContext.packageName}"
+            ).shell(command, onAuthorizationRequested)
+            AdbSelfInstallCommand.parse(output).also { result ->
+                if (result == AppUpdateAdbInstallResult.Started) {
+                    synchronized(adbInstallLock) {
+                        lastAdbInstallStartedAtMillis = System.currentTimeMillis()
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            AppUpdateAdbInstallResult.Unavailable(AdbSelfInstallCommand.describeFailure(error))
+        }
+    }
+
     override fun claimInstallerLaunch(downloadId: Long): Boolean {
         synchronized(installerLaunchLock) {
             val now = System.currentTimeMillis()
@@ -418,6 +460,14 @@ class AppUpdateRepositoryImpl(
 
         @Volatile
         private var lastInstallerLaunchedAtMillis: Long = 0L
+
+        // adb 安装交出去后，pm install 加 am start 一般几十秒内完成，App 会被系统结束；
+        // 这段时间内再次请求 adb 安装直接当作已开始，避免重复安装。
+        private const val adbInstallInFlightWindowMillis = 120_000L
+        private val adbInstallLock = Any()
+
+        @Volatile
+        private var lastAdbInstallStartedAtMillis: Long = 0L
 
         private fun AvailableAppRelease.taskId(): Long {
             val key = AppUpdateDownloadCachePolicy.taskKey(this)
