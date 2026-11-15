@@ -1,308 +1,215 @@
-# SillyDroid 自定义版 AI 交接说明
+# STDROID（SillyDroid 自用定制版）AI 交接说明
 
-这份文档给后续接手的 AI 使用。目标是从零了解当前仓库状态、用户定制点、常用命令和容易踩坑的位置。
+给接手这个仓库的 AI 看：项目是什么、用户要什么、怎么构建发布、关键机制在哪、哪些坑已经踩过。会随时间变化的状态（当前分支、最近提交、和上游差多少）不写在这里，用下面的命令现查。
 
-## 当前仓库状态
+## 项目概况
 
-- 工作目录：`/root/workspace/SillyDroid`
-- 当前分支：`custom/st-shell`
-- 上游仓库：`origin = https://github.com/jialmaster/SillyDroid.git`
-- 用户 fork：`fork = https://github.com/xiu14/SillyDroid.git`
-- 当前已合并上游版本：`sillydroid-v1.0.1.61-1.18.0-release`
-- 最近本地提交：
-  - `1fccf0f Fix upstream WebView unit test compatibility`
-  - `35a8359 Merge remote-tracking branch 'origin/master' into custom/st-shell`
-  - `8e0c6df Add storage settings and refine launcher icon`
-  - `bd67617 Add integrated remote backup controls`
-
-推送用户 fork 时优先用 SSH：
+- 仓库：`/root/workspace/SillyDroid`，日常分支 `custom/st-shell`。
+- 远端：
+  - `origin`：上游 `https://github.com/jialmaster/SillyDroid.git`。
+  - `fork`：用户的公开 fork `https://github.com/xiu14/SillyDroid.git`。构建和发布都在 fork 上跑。
+- 这是用户自用的 SillyDroid 定制版，目标是把原来 ST Android Shell 的实用功能并进本地运行的 SillyDroid。
+- 名字：对用户叫 **STDROID**（App 名、Release 名 `stdroid-v<版本>`）；代码、包名和上游脚本里仍叫 SillyDroid。包名是 `com.jm.sillydroid.debug`，只出 debug 包。
+- 手机：用户主力机是 OPPO Find X8（adb 和规矩见 `/root/workspace/连x8.md`）。
+- 查当前状态和上游差距：
 
 ```bash
-GIT_SSH_COMMAND='ssh -F /config/.ssh/config' git push github-xiu14:xiu14/SillyDroid.git custom/st-shell
+git status --short
+git log --oneline --decorate -8
+git fetch origin --prune --tags
+git rev-list --left-right --count custom/st-shell...origin/master   # 左：我们独有，右：上游没合进来的
+git log --oneline custom/st-shell..origin/master
 ```
 
-不要在文档、提交信息或命令输出里暴露用户曾提供过的 token。
-
-## 用户想要的方向
-
-这是用户自用的 SillyDroid 定制版，目标是把原来 ST Android Shell 的实用功能合进本地运行的 SillyDroid。
-
-用户偏好：
+## 用户偏好
 
 - 功能直接内置到设置页，不要额外网页入口。
-- UI 尽量干净，少放不常用选项。
-- `Tavern` 标签页作为设置默认入口。
+- UI 干净，少放不常用选项。设置页默认打开 `Tavern` 标签页。
 - 备份、图床、自动回底、日志球、存储分析等功能要稳定实用。
-- APK 名字目前是 `STDROID`，图标使用 ST Shell 的 `logo1` 风格，透明底，不要黑底、白底或明显拉伸。
-
-## 已经做过的主要改动
-
-### ST Shell 功能迁移
-
-已经内置或迁移过：
-
-- ST shell bridge 扩展。
-- `xiu14/1` 相关内置扩展资源。
-- 流体云/代理图床相关能力。
-- 静音提示音处理。
-- 进入聊天页自动回底逻辑。
-- 悬浮按钮精简：
-  - 保留设置、导出日志、刷新、立即备份等实用按钮。
-  - 删除“在浏览器打开”。
-  - 删除反馈相关功能和按钮。
-- Android 宿主扩展面板默认关闭。
-
-自动回底要注意：用户确认过，希望进入聊天页时自动回到底部；如果使用 SillyTavern 原生的 `chat-jump`，不应该被反复拉回底部。
-
-### 备份功能
-
-远程备份服务位于：
-
-```text
-android-tavern/app/src/main/assets/bootstrap/sidecars/st-remote-backup/server.js
-```
-
-设置页已内置备份控制，不再要求用户打开 `8787` 网页操作。当前逻辑包含：
-
-- 立即备份按钮。
-- 自动备份开关。
-- R2 配置弹窗。
-- 备份日志/备份列表/恢复入口。
-- 支持本地和 R2。
-
-用户曾问过“R2 有了是否还需要本地备份”。当前倾向是：R2 配置存在时，主要以 R2 为准，本地只作为必要中转或短期副本，避免长期堆积。
-
-相关 Kotlin 入口主要在：
-
-```text
-android-tavern/domain/src/main/kotlin/com/jm/sillydroid/domain/backup/RemoteBackupRepository.kt
-android-tavern/data/settings/src/main/kotlin/com/jm/sillydroid/data/settings/RemoteBackupRepositoryImpl.kt
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/ui/backup/BootstrapSettingsBackupCoordinator.kt
-```
-
-### 设置页重组
-
-设置页标签顺序已经改为：
-
-```text
-Tavern / 备份 / 存储 / 酒馆设置 / 扩展/插件 / 高级 / 终端 / 日志
-```
-
-默认打开 `Tavern`，不是原来的 APP 设置页。
-
-相关文件：
-
-```text
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/model/SettingsTab.kt
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/model/SettingsActivityUiState.kt
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/ui/screen/BootstrapSettingsScreenController.kt
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/ui/terminal/TerminalPageController.kt
-android-tavern/feature/settings/src/main/res/layout/activity_bootstrap_settings.xml
-android-tavern/feature/settings/src/main/res/values/strings.xml
-```
-
-`日志球` 开关已从原 APP 设置页移动到 `Tavern` 标签页。旧的 APP 设置页现在是 `高级`，位置靠后，尽量不打扰用户。
-上游新增的“启动模式”也放在 `Tavern` 标签页，方便直接切换快速启动相关行为。
-
-### 存储占用分析
-
-新增了 `存储` 标签页，用于显示和清理安全项目。
-
-相关文件：
-
-```text
-android-tavern/domain/src/main/kotlin/com/jm/sillydroid/domain/storage/StorageUsageRepository.kt
-android-tavern/data/settings/src/main/kotlin/com/jm/sillydroid/data/settings/StorageUsageRepositoryImpl.kt
-android-tavern/feature/settings/src/main/kotlin/com/jm/sillydroid/feature/settings/ui/storage/BootstrapSettingsStorageCoordinator.kt
-```
-
-显示项包括：
-
-- APP 私有数据
-- ST 用户数据
-- 聊天记录
-- 角色
-- 头像/背景/素材
-- 世界书
-- 扩展/插件
-- ST 程序目录
-- 离线 Linux runtime
-- 日志
-- WebView 数据
-- 代理图床缓存
-- 临时文件
-- 本地备份
-
-清理按钮只给安全项目：
-
-- 日志
-- 代理图床缓存
-- 临时文件
-- WebView 数据
-- 本地备份副本
-
-聊天记录、角色、世界书、程序目录、离线 runtime 等高风险项目只显示，不提供直接清理。
-
-### 冷启动加速
-
-目标是缩短「点开图标 → 酒馆可用」的时间，改动分两头：
-
-宿主侧（`android-tavern/data/runtime/.../HostRuntime.kt`、`BootstrapSessionManager.kt`）：
-
-- `HealthProbe.awaitReady` 在每 1 秒一轮内以 100ms 间隔探测，Node 一开始监听就能发现。
-- `AssetExtractor.prepareHostExtensionAssets` 用 `bootstrap/.host-asset-sync-stamp` 记录「APK 安装标识 + 脚本与 host 扩展的文件清单」，都没变就跳过那近千个文件的重写。
-- `RootfsRuntimeProvisioner.ensure` 用 `rootfs/.rootfs-runtime-verified-stamp` 记录上次校验通过时的二进制和系统版本，没变就不再跑 `ensure-rootfs-runtime.sh`；手动重试、崩溃自动重启、启动失败后都会重新完整校验。
-
-Node 侧（`android-tavern/app/src/main/assets/bootstrap/scripts/tavern-startup-preload.cjs`，由 `tavern-entrypoint.sh` 用 `node --require` 挂到 server 进程）：
-
-- 打开 compile cache 并在启动后主动 flush。
-- 把 `vectra`、`sillytavern-transformers`、`archiver` 换成惰性桩，第一次用到才加载。
-- 前端库产物已存在时跳过 webpack 编译。
-
-`server-source.zip` 仍是原样的上游源码，这些都是进程内处理。排查问题时设置环境变量 `SILLYDROID_STARTUP_PRELOAD=off` 可整体关闭预加载。
-
-### server 覆盖层（升级后保留对内置酒馆程序文件的改动）
-
-App 自带的酒馆程序在 `files/android-tavern/bootstrap/server`（`paths.serverDir`）。升级包里的酒馆源码一变（`server-source-manifest.json` 不同），`prepareServerArchives()` 就会把源码包覆盖解压进去，同名文件直接被换回原版。解压时唯一跳过的是根 `config.yaml`。所以**不要直接改 `bootstrap/server` 里的文件**，改动放进覆盖层：
-
-- 位置：`files/android-tavern/data/server/overrides/`（`paths.serverDataDir/overrides`，也就是 `stdroid` 远程编辑根目录下的 `overrides/`）。结构跟 `bootstrap/server` 一一对应，例如 `overrides/public/img/logo.png` 对应 `bootstrap/server/public/img/logo.png`。
-- 时机：每次启动，在 server 资产准备完之后、启动 Node 之前铺一遍，不管这次有没有重新解压。内容相同的文件跳过，不会重写。目标不存在时会连目录一起新建。
-- 限制：只接受 `public/` 下的普通文件。不跟随符号链接，覆盖层里的链接、`bootstrap/server` 里的上级目录链接（如 `public/scripts/extensions/third-party`）和目标链接都会拒绝。拒绝 `..`、绝对路径、空段这类越界路径，也不碰 `config.yaml`、`node_modules`、`third-party`。单个文件出错只记原因，整体出错只记日志，都不影响启动。
-- 日志：每次启动在启动日志 `files/android-tavern/logs/startup-*.log` 里写一行 `server 覆盖层：…`，列出覆盖了哪些、内容相同跳过哪些、拒绝了哪些及原因。没有 `overrides/` 时写「不存在，跳过」。
-- 用法：`stdroid put <本地文件> overrides/public/<路径> --no-reload`，再重启 App。只刷新页面不会生效，覆盖层只在启动时铺。
-- 撤销：删掉 `overrides/` 里的文件只是不再覆盖，`bootstrap/server` 里已经铺过去的那份不会自动还原。要么手动放回原版，要么等下次酒馆源码变化时被解压换回。
-- 实现：`data/runtime/.../ServerOverlay.kt`（`applyServerOverlay`、`resolveServerOverlayTarget`），在 `BootstrapSessionManager.runBootstrapAttempt` 里调用。测试在 `ServerOverlayTest`。
-
-### 图标和应用名
-
-用户要求：
-
-- APP 名称：`STDROID`
-- 图标使用 ST Shell 的 `logo1` 感觉。
-- 不要拉伸。
-- 不要黑底、白底、白边框。
-- 要透明底。
-
-相关资源：
-
-```text
-android-tavern/app/src/main/res/drawable/ic_launcher.png
-android-tavern/app/src/main/res/drawable/ic_launcher_foreground.png
-android-tavern/app/src/main/res/drawable/ic_launcher_background.xml
-android-tavern/app/src/main/res/drawable-anydpi-v26/ic_launcher.xml
-```
-
-当前 `ic_launcher_background.xml` 应保持透明：
-
-```xml
-<solid android:color="@android:color/transparent" />
-```
-
-注意：部分安卓桌面会给透明 adaptive icon 自动加底色或阴影，这不是 APK 资源里的黑底。
-
-## 上游合并记录
-
-已经合并官方上游两个提交：
-
-- `84714c0 Harden bootstrap startup and WebView compatibility dialogs`
-- `3ecba38 fix(android): 修复子进程环境继承兼容性问题`
-
-合并后补过一个测试兼容提交：
-
-- `1fccf0f Fix upstream WebView unit test compatibility`
-
-这个提交做了：
-
-- `feature/main` 增加 `androidx.test:core:1.6.1` 测试依赖。
-- Robolectric 测试 SDK 从 35 调到 34，适配当前 `robolectric:4.13`。
-- 调整 `WebViewCompatibilityHintDialogMessagePolicy` 中禁用长按的顺序，避免设置 listener 后 `isLongClickable` 又被置回 true。
+- 进入聊天页要自动回到底部；但用 ST 原生 `/chat-jump` 跳转后，不能被反复拉回底部。
+- 图标用 ST Shell 的 `logo1` 风格，透明底，不要黑底、白底、白边框，也不要拉伸。
+- 提交信息用中文，格式 `type(scope): 说明`。每个验证通过的逻辑改动单独提交。
+- `custom/st-shell` 只在用户要求时才推。本地提交会随构建快照带上 GitHub（见下文），不用为了备份去推，也不要反复提醒它没推。
 
 ## 常用构建和验证命令
 
-**本项目的构建一律走 GitHub Actions，不走 `rbuild`**，也不要在本机跑 `./gradlew`。入口是 `scripts/stdroid-gha-build.sh`，在仓库根目录执行：
+**构建只走 GitHub Actions。**本机不跑 `./gradlew`。rbuild 已经退役，构建机也没了。入口脚本是 `scripts/stdroid-gha-build.sh`，在仓库根目录执行：
 
 ```bash
 cd /root/workspace/SillyDroid
-```
 
-打 debug APK（完整流程 stage 1→4，日常改宿主代码也用这个）：
-
-```bash
-bash scripts/stdroid-gha-build.sh                       # Tavern 版本固定为 workflow 里的 STDROID_TAVERN_TAG
+# 完整构建 debug APK（stage 1→4），改宿主代码后打包用这个
+bash scripts/stdroid-gha-build.sh
+bash scripts/stdroid-gha-build.sh --refresh             # 不复用缓存里的 stage 1/3 产物，强制重建 rootfs / server
 bash scripts/stdroid-gha-build.sh --tavern-tag latest   # 额外参数原样传给 scripts/build-stdroid-full.sh
-bash scripts/stdroid-gha-build.sh --refresh             # 忽略缓存里的 stage 1/3 产物，强制重建
-```
 
-产物下载到：
-
-```text
-/root/workspace/SillyDroid/artifacts/releases/android-apk/app-debug.apk
-```
-
-只跑 Gradle 任务（单测、编译检查），比如设置页和相关单测：
-
-```bash
+# 只跑 Gradle 任务（单测、编译检查），约 1 分钟
 bash scripts/stdroid-gha-build.sh gradle \
-:feature:settings:compileDebugKotlin \
-:feature:settings:testDebugUnitTest \
-:feature:main:testDebugUnitTest \
-:data:runtime:testDebugUnitTest \
-:data:settings:testDebugUnitTest
+  :feature:settings:compileDebugKotlin \
+  :feature:settings:testDebugUnitTest \
+  :feature:main:testDebugUnitTest \
+  :data:runtime:testDebugUnitTest \
+  :data:settings:testDebugUnitTest
 ```
 
-失败时脚本会打印失败步骤日志的末尾，测试报告下载到 `artifacts/ci-reports/<run id>/`。
+- 完整构建的 APK 下载到 `artifacts/releases/android-apk/app-debug.apk`，脚本最后会打印路径、SHA-256 和大小。
+- gradle 模式的测试报告（HTML）下载到 `artifacts/ci-reports/<run id>/`。失败时脚本会打印失败步骤日志的末尾。
+- 只能用这个入口。不要用上游的 `scripts/build-tavern-android-local.sh`，也不要用 fork 上的 `tavern-upstream-apk`（`.github/workflows/sillydroid-upstream-apk.yml`）。它们按上游 release 计算 versionCode（如 1810001069），装到手机上会挡住之后所有 stdroid 版本的覆盖安装；后者还会在 fork 上建 Release。
 
-工作方式（workflow：`.github/workflows/stdroid-build.yml`）：
+### 工作方式
 
-- 脚本用临时 index 把工作区快照成一个 commit（父提交是 HEAD，包含未提交的改动和没被 gitignore 的新文件），强推到 fork `xiu14/SillyDroid` 的 `ci/stdroid` 分支来触发构建；当前分支、暂存区和工作区都不动。参数写在 commit message 的 `Stdroid-CI-Mode` / `Stdroid-CI-Args` trailer 里。
-- fork 是**公开仓库**，未提交的改动也会推上去，不要把密钥放在没被 gitignore 的文件里。
-- 被 gitignore 的文件不会上传，包括 `android-tavern/app/src/main/assets` 里的 rootfs、`server-source.zip`、`server-source-manifest.json`。所以 CI 上不能单跑 `:app:assembleDebug`，打 APK 只能走完整流程，rootfs 和 server 由 stage 1/3 现做。
-- Tavern 版本：本机 assets 的 manifest 不入库，CI 上读不到，所以 workflow 里用 `STDROID_TAVERN_TAG`（当前 `1.18.0`）固定版本，免得悄悄升级。升级 Tavern 时要同步改这个值。
-- 版本号取 `android-tavern/gradle.properties` 的 `stdroidVersionCode` / `stdroidVersionName`；debug 签名用仓库里的 `android-tavern/app/signing/debug.keystore`，不需要配 Secret。release 构建暂不支持。
-- JDK 固定 17（`actions/setup-java`）：`ubuntu-latest` 默认是 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，用 25 的话 `:feature:main:testDebugUnitTest` 会有约 30 个测试失败。
-- 不要用 fork 上现成的 `tavern-upstream-apk` workflow，也不要直接用上游的 `scripts/build-tavern-android-local.sh`：它们按上游 release 计算 versionCode（如 1810001069），装到手机后会挡住后续 stdroid 版本的覆盖安装；前者还会在 fork 上建 Release。
-- 耗时（2026-11 实测，公开仓库的 runner 是 4 核 16G）：触发后几秒内开跑；没缓存时完整构建约 6 分钟，有缓存约 2 分钟（Gradle 1m28s）；337MB 的 APK 走代理下载回本机约 2 分钟。
-- 缓存（`actions/cache`）：rootfs、server source、Gradle 依赖。7 天没用会被删除，构建脚本或 gradle 配置一改也会换 key；之后第一次构建会慢一些，会自动重建，不用手动处理。APK artifact 保留 3 天。
-- 缓存保活：VPS 的 crontab 每天 05:23 跑 `scripts/stdroid-gha-keepalive.sh`（日志 `artifacts/gha-keepalive.log`）。缓存 4 天没用时，它会在 `ci/stdroid` 上追加一个 `Stdroid-CI-Mode: keepalive` 空提交；workflow 只拉一次缓存刷新使用时间，约 1 分钟，不编译、不存缓存，也不会取消正在跑的构建。`--force` 可手动触发。它基于 `ci/stdroid` 当前提交的 tree，所以最后一次推上去的快照里必须有带 keepalive 模式的 workflow。
-- `.rbuild.env` 是以前走 rbuild 时留下的，只作 GHA 不可用时的备用方案（`rbuild exec bash scripts/build-stdroid-full.sh --build-type debug`），平时不要用。
+workflow 是 `.github/workflows/stdroid-build.yml`。
+
+1. 脚本用临时 index 把工作区快照成一个 commit，父提交是 HEAD。未提交的改动和没被 gitignore 的新文件都会带上。当前分支、暂存区和工作区都不动。
+2. 把快照强推到 fork 的 `ci/stdroid` 分支，触发 workflow。模式和参数写在 commit message 的 trailer 里：
+   - `Stdroid-CI-Mode`：`full`、`gradle`、`publish` 或 `keepalive`。
+   - `Stdroid-CI-Args`：`full` / `publish` 模式下是 `build-stdroid-full.sh` 的额外参数，`gradle` 模式下是 Gradle 任务。
+   - `Stdroid-CI-Changelog-B64`：`publish` 模式的更新说明（base64）。
+3. 脚本等构建结束，下载产物。
+
+各模式做什么：
+
+| 模式 | 做什么 | 产物 |
+| --- | --- | --- |
+| `full` | `scripts/build-stdroid-full.sh --build-type debug` | artifact `stdroid-apk-debug`，保留 3 天，脚本自动下载 |
+| `gradle` | `./gradlew -p android-tavern <任务>` | artifact `stdroid-gradle-reports`，保留 3 天 |
+| `publish` | 同 `full`，再建 Release（见下一节） | Release `stdroid-v<versionName>` |
+| `keepalive` | 只拉一次缓存刷新使用时间，不编译 | 无 |
+
+要注意的事：
+
+- **fork 是公开仓库**，未提交的改动也会推上去，密钥不能放在没被 gitignore 的文件里。`ci/stdroid` 的快照以 HEAD 为父提交，所以本地提交会跟着上 GitHub。
+- **同时只跑一个构建**：新推一个构建会取消正在跑的那个（`concurrency` + `cancel-in-progress`）。`keepalive` 单独一组，不会取消构建，也不会被构建取消。
+- **被 gitignore 的 assets 不会上传**，包括 `android-tavern/app/src/main/assets` 里的 rootfs、`server-source.zip`、`server-source-manifest.json`。所以 CI 上不能单跑 `:app:assembleDebug`，打 APK 只能走完整流程，rootfs 和 server 由 stage 1/3 现做（有缓存直接复用）。
+- **Tavern 版本固定**：CI 上读不到本机 assets 的 manifest，所以 workflow 用 `STDROID_TAVERN_TAG`（当前 `1.18.0`）固定版本，免得悄悄升级。升级 Tavern 时要改这个值。
+- **版本号**取 `android-tavern/gradle.properties` 的 `stdroidVersionCode` / `stdroidVersionName`，不按上游规则改写。
+- **签名**用仓库里的 `android-tavern/app/signing/debug.keystore`，不需要配 Secret。release 构建不支持。
+- **JDK 固定 17**：`ubuntu-latest` 默认是 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，用 25 的话 `:feature:main:testDebugUnitTest` 会有约 30 个测试失败。
+- **耗时**（2026-11 实测，公开仓库的 runner 是 4 核 16G）：触发后几秒内开跑。有缓存时，gradle 模式约 1 分钟，完整构建或发布约 3 分钟；没缓存的完整构建要 11 分钟以上。337MB 的 APK 下载回本机约 2 分钟。
+- **缓存**（`actions/cache`）：full 和 gradle 两种模式分开存。full 存 rootfs、server source、Android 工具链和 Gradle；gradle 只存 Gradle。构建脚本或 gradle 配置一改就会换 key，之后第一次构建慢一些，会自动重建。
+- **缓存保活**：GitHub 会删掉 7 天没用过的缓存。VPS 的 crontab 每天 05:23 跑 `scripts/stdroid-gha-keepalive.sh`，日志在 `artifacts/gha-keepalive.log`。缓存 4 天没用时，它在 `ci/stdroid` 上追加一个 `Stdroid-CI-Mode: keepalive` 空提交，约 1 分钟跑完。`--force` 可以手动触发。它用的是 `ci/stdroid` 当前提交的 tree，所以最后推上去的快照里必须有带 keepalive 模式的 workflow。
+- **免费额度**：公开仓库的 Actions 分钟数、Release 存储和下载流量都免费。Release 单个文件要小于 2 GiB。
+- **其他 workflow** 都是上游的：`sillydroid-*.yml` 和 `tavern-server-source-release.yml`。它们只在推 master/main 或手动触发时才跑，留着是为了合并上游时不冲突，别去用。
 
 ## 发布新版本（应用内更新）
 
-App 从 fork 的 GitHub Release 检查更新：`https://github.com/xiu14/SillyDroid/releases/latest/download/version.json`（`android-tavern/app/build.gradle.kts` 的 `SILLYDROID_LATEST_RELEASE_METADATA_URL`）。APK 有 337MB，超过了 filesite 的 300MB 上限，所以**不走 filesite**，也不要再往 `files.biatch.party` 写 `versions/stdroid.json`。filesite 的 Worker 会把 `apkUrl` 强制改写成自己的 `/dl/` 地址，所以没法只用它来存版本 JSON。
+App 从 fork 的 GitHub Release 检查更新：`https://github.com/xiu14/SillyDroid/releases/latest/download/version.json`（`android-tavern/app/build.gradle.kts` 的 `SILLYDROID_LATEST_RELEASE_METADATA_URL`）。filesite（`files.biatch.party`）已经删掉了，不要再往那里发。
 
 发布前先向用户确认 `versionCode`、`versionName` 和更新说明，缺哪个问哪个，不要猜。然后：
 
 ```bash
 # 1. 递增版本号并提交（versionCode 必须大于线上值，否则 App 不会提示更新）
 #    android-tavern/gradle.properties：stdroidVersionCode=<code>、stdroidVersionName=<name>
-git commit -am "chore: 发布 v<name>"
+git commit -am "chore: 版本号升到 <name>"
 
 # 2. 发布：GHA 完整构建 → 建 Release stdroid-v<name>（APK + version.json）→ 设为 latest
 bash scripts/stdroid-gha-build.sh publish --changelog '修复 xxx；新增 yyy'
 bash scripts/stdroid-gha-build.sh publish --changelog-file notes.md   # 多行说明
 ```
 
-- 脚本和 workflow 都会检查：工作区必须干净，`versionCode` 必须大于线上 `version.json` 的值，同名 tag 不能已存在。任何一项不满足都会在构建前停下。
-- Release 先建成草稿，APK 和 `version.json` 传完才正式发布并设为 latest，App 不会拿到指向还没传完的文件的版本。
-- `version.json` 和 filesite 的格式一样（`versionCode`、`versionName`、`apkKey`=Release 资产名、`apkUrl`=固定 tag 的下载地址、`size`、`sha256`、`changelog`），由 `FilesiteVersionParser` 解析，`sha256` 由 workflow 计算。
-- 撤回某个版本：`gh release delete stdroid-v<name> -R xiu14/SillyDroid --cleanup-tag`，latest 会回落到上一个 Release；或者用 `gh release edit <上一个 tag> --latest` 把上一个版本重新设为 latest。
-- Release 的 tag 指向 `ci/stdroid` 上的快照提交，内容和当时的 HEAD 一致；`custom/st-shell` 分支仍然只在用户要求推送时推。`ci/stdroid` 的快照以 HEAD 为父提交，本地提交会随构建一起上 GitHub，不用为了备份去推 `custom/st-shell`，也不用每次提醒用户它没推。
+- 构建前会检查三项：工作区必须干净；`versionCode` 必须大于线上 `version.json` 的值；同名 tag 不能已存在。脚本和 workflow 各查一遍，任何一项不满足都会在构建前停下。
+- Release 先建成草稿，APK 和 `version.json` 传完才正式发布并设为 latest。所以 App 不会拿到一个指向还没传完的 APK 的版本。
+- 发布后脚本会等 `releases/latest` 的跳转切到新版本（最多 60 秒），再打印线上的 `version.json`。
+- `version.json` 的字段：`versionCode`、`versionName`、`apkKey`（Release 资产名）、`apkUrl`（固定 tag 的下载地址）、`size`、`sha256`、`changelog`。它沿用以前 filesite 的格式，由 `FilesiteVersionParser` 解析，`sha256` 由 workflow 计算。
+- 撤回某个版本：`gh release delete stdroid-v<name> -R xiu14/SillyDroid --cleanup-tag`，latest 会回落到上一个 Release。也可以用 `gh release edit <上一个 tag> -R xiu14/SillyDroid --latest` 把上一个版本重新设为 latest。
+- Release 的 tag 指向 `ci/stdroid` 上的快照提交，内容和当时的 HEAD 一致。
+- 不发版、只想装到手机上测时，用完整构建拿到 APK，再按 `/root/workspace/连x8.md` 用 adb 装。装之前要先问用户。
 
 ### 应用内更新的安装方式：本机 adb 自安装
 
-ColorOS 用系统安装器装未认证开发者的 APK，每次都要确认风险、输入密码；用 adb（shell 身份）装不走这套检测。所以下载完、SHA-256 校验通过后，App 自己当 adb 客户端连本机 adbd 去装（`data/update` 的 `LocalAdbClient` / `AdbSelfInstaller.kt`，调用方是 `AppUpdateDownloadService` 和关于页的「安装」按钮）：
+ColorOS 用系统安装器装未认证开发者的 APK 时，每次都要确认风险、输入密码；用 adb（shell 身份）装不走这套检测。所以下载完、SHA-256 校验通过后，App 自己当 adb 客户端去连本机 adbd 安装。代码在 `data/update` 的 `LocalAdbClient` / `AdbSelfInstaller.kt`，调用方是 `AppUpdateDownloadService` 和关于页的「安装」按钮。
 
-- 连 `127.0.0.1:5555`。X8 的 adbd 常开 TCP 5555（见 `/root/workspace/连x8.md`），手机重启后要先 `x8up` 才有。连不上、授权被拒或超时，就退回系统安装器和「可安装」通知。
-- 第一次连会弹「允许 USB 调试」，勾选「一律允许」后不再弹。认证私钥放在 Android Keystore（alias `stdroid-self-update-adb`，不可导出）：酒馆服务端插件和 App 是同一个 uid，私钥要是落成文件，插件就能读走它拿到 adb shell。在开发者选项里「撤销 USB 调试授权」会把它和 VPS、Termux 的授权一起清掉。
+- 连 `127.0.0.1:5555`。X8 的 adbd 常开 TCP 5555，手机重启后要先 `x8up` 才有（见 `/root/workspace/连x8.md`）。连不上、授权被拒或超时，就退回系统安装器和「可安装」通知。
+- 第一次连会弹「允许 USB 调试」，勾选「一律允许」后不再弹。认证私钥放在 Android Keystore（alias `stdroid-self-update-adb`，不可导出），因为酒馆服务端插件和 App 是同一个 uid，私钥要是落成文件，插件就能读走它拿到 adb shell。在开发者选项里「撤销 USB 调试授权」，会把它和 VPS、Termux 的授权一起清掉。
 - 必须走 **shell_v2**（`shell,v2,raw:`）。老式 `shell:` 原始通道在连接断开时，adbd 会把这次会话起的后台进程全杀掉，setsid / nohup 都拦不住。
 - 必须**经管道**交给 `pm install -S <大小>`。`pm install <路径>` 是 system_server 自己按路径打开文件，SELinux 不让它读 `/storage/emulated`（fuse）。
-- 命令先在 shell 端重算 SHA-256，对上了才 `setsid nohup` 后台执行 `pm install`，装完 `am start` 重新打开 App。安装日志在手机的 `/data/local/tmp/stdroid-adb-install.log`，App 侧的事件记在 host 诊断日志 `category=app_update`（`adb_install_started` / `adb_install_unavailable` / `adb_install_not_finished`）。
+- 命令先在 shell 端重算 SHA-256，对上了才用 `setsid nohup` 在后台执行 `pm install`，装完用 `am start` 重新打开 App。
+- 日志：手机上的安装日志在 `/data/local/tmp/stdroid-adb-install.log`。App 侧的事件记在 host 诊断日志的 `category=app_update` 下，有 `adb_install_started`、`adb_install_unavailable`、`adb_install_not_finished` 三种。
 - 交给 adb 后服务等 120 秒，进程还活着就说明没装上，退回「可安装」通知。X8 上实测从交给 adb 到装完约 2 秒。
-- 安装逻辑只在**执行安装的那个版本**里生效：改了这块代码后，要先把新版本用 VPS 的 adb 直接装到手机上，再发一个更高的版本，才能在 App 里测到改动（这需要先征得用户同意）。
+- 安装逻辑只在**执行安装的那个版本**里生效。改了这块代码后，要先用 VPS 的 adb 把新版本直接装到手机上（先征得用户同意），再发一个更高的版本，才能在 App 里测到改动。
 
-## Stdroid JS-Slash-Runner 导入 API
+## 关键机制
 
-当前 8788 本机导入 API 只支持全局脚本：
+### ST Shell 功能迁移
+
+已经内置：ST shell bridge 扩展、`xiu14/1` 相关内置扩展资源、流体云 / 虚拟流体云、代理图床、静音提示音处理、进入聊天页自动回底、日志球、字体拦截、站点登录信息。悬浮按钮只保留设置、导出日志、刷新、立即备份，去掉了「在浏览器打开」和反馈。Android 宿主扩展面板默认关闭。
+
+流体云和虚拟流体云的生成状态来自内置扩展 `android-tavern/extensions/tavern-native-bridge`，它监听 ST 的生成事件，再转给 Android（事件时序见它的 README）：
+
+- 「准备中」：发送按钮被按下，或收到 `GENERATION_AFTER_COMMANDS`。
+- 「在想了」：`/api/.../generate` 的响应头到达，也就是首包。
+- 「在写了」：流式文本里出现 `<content>`。
+- 结束：`GENERATION_ENDED` 或 `GENERATION_STOPPED`。
+
+酒馆助手 `generateRaw({ should_silence: true })` 这类静默后台生成（比如自动范围总结），会发 `GENERATION_AFTER_COMMANDS`，但永远不会发 `GENERATION_ENDED`，所以桥接靠 `js_generation_requested` 把它们整轮忽略掉。以后改桥接，别把这一点改坏了，否则流体云会一直挂着下不去。
+
+### 设置页
+
+标签顺序：`Tavern / 备份 / 存储 / 酒馆设置 / 扩展/插件 / 高级 / 终端 / 日志`。默认打开 `Tavern`。日志球开关和上游的「启动模式」都放在 `Tavern`。旧的 APP 设置页现在叫 `高级`，放在靠后的位置。改设置页要同步更新 `SettingsTabTest`。
+
+相关文件在 `feature/settings` 下：`model/SettingsTab.kt`、`model/SettingsActivityUiState.kt`、`ui/screen/BootstrapSettingsScreenController.kt`、`res/layout/activity_bootstrap_settings.xml`、`res/values/strings.xml`。
+
+### 备份
+
+- 远程备份服务是 `android-tavern/app/src/main/assets/bootstrap/sidecars/st-remote-backup/server.js`。设置页内置了全部操作：立即备份、自动备份开关、R2 配置、备份日志 / 列表 / 恢复，不需要打开 `8787` 网页。
+- 支持本地和 R2 两种存储。配了 R2 时以 R2 为准，本地只做必要的中转或短期副本，避免长期堆积。
+- Kotlin 入口：`domain/backup/RemoteBackupRepository.kt`、`data/settings/RemoteBackupRepositoryImpl.kt`、`feature/settings/ui/backup/BootstrapSettingsBackupCoordinator.kt`。
+- 备份、聊天记录、角色、世界书相关的删除功能要非常谨慎，默认只做安全清理。
+
+### 存储占用分析
+
+`存储` 标签页显示各部分的占用：APP 私有数据、ST 用户数据、聊天记录、角色、素材、世界书、扩展、程序目录、离线 runtime、日志、WebView、图床缓存、临时文件、本地备份。
+
+只有安全项目给清理按钮：日志、代理图床缓存、临时文件、WebView 数据、本地备份副本。聊天记录、角色、世界书、程序目录、离线 runtime 这些只显示，不提供清理。
+
+代码：`domain/storage/StorageUsageRepository.kt`、`data/settings/StorageUsageRepositoryImpl.kt`、`feature/settings/ui/storage/BootstrapSettingsStorageCoordinator.kt`。
+
+### 冷启动加速
+
+目标是缩短「点开图标 → 酒馆可用」的时间。
+
+宿主侧（`data/runtime` 的 `HostRuntime.kt`、`BootstrapSessionManager.kt`）：
+
+- `HealthProbe.awaitReady` 每 1 秒一轮，轮内每 100ms 探测一次，Node 一开始监听就能发现。
+- `AssetExtractor.prepareHostExtensionAssets` 用 `bootstrap/.host-asset-sync-stamp` 记录「APK 安装标识 + 脚本与 host 扩展的文件清单」。都没变就跳过那近千个文件的重写。
+- `RootfsRuntimeProvisioner.ensure` 用 `rootfs/.rootfs-runtime-verified-stamp` 记录上次校验通过时的状态，没变就不再跑 `ensure-rootfs-runtime.sh`。stamp 是 v2 格式：文件身份一节，加上内容 SHA-256 一节。App 升级后安装路径变了、文件身份对不上时，只要内容哈希一致，也会跳过校验。手动重试、崩溃自动重启、启动失败后都会重新完整校验。
+- 升级后第一次启动仍要 8～9 秒，比平时慢，怀疑是 Node 的 compile cache 和安装路径绑定了，还没查。
+
+Node 侧（`app/src/main/assets/bootstrap/scripts/tavern-startup-preload.cjs`，由 `tavern-entrypoint.sh` 用 `node --require` 挂到 server 进程）：
+
+- 打开 compile cache，并在启动后主动 flush。
+- 把 `vectra`、`sillytavern-transformers`、`archiver` 换成惰性桩，第一次用到时才加载。升级内置 Tavern 后惰性桩默认不生效：`LAZY_SUPPORTED_TAVERN_VERSIONS` 里只列了验证过的版本。要先核对上游 `src/endpoints/vectors.js`、`src/users.js`、`src/transformers.js` 对这三个包的用法没变，再把新版本号加进去。
+- 前端库产物已存在时跳过 webpack 编译。
+
+`server-source.zip` 仍是原样的上游源码，这些都是进程内处理。排查问题时，设置环境变量 `SILLYDROID_STARTUP_PRELOAD=off` 可以整体关闭预加载。
+
+### server 覆盖层（升级后保留对内置酒馆程序文件的改动）
+
+App 自带的酒馆程序在 `files/android-tavern/bootstrap/server`（`paths.serverDir`）。升级包里的酒馆源码一变（`server-source-manifest.json` 不同），`prepareServerArchives()` 就会把源码包覆盖解压进去，同名文件直接被换回原版。解压时唯一跳过的是根目录的 `config.yaml`。所以**不要直接改 `bootstrap/server` 里的文件**，改动放进覆盖层：
+
+- **位置**：`files/android-tavern/data/server/overrides/`，也就是 `paths.serverDataDir/overrides`、`stdroid` 远程编辑根目录下的 `overrides/`。结构跟 `bootstrap/server` 一一对应，例如 `overrides/public/img/logo.png` 对应 `bootstrap/server/public/img/logo.png`。
+- **时机**：每次启动，server 资产准备完之后、启动 Node 之前铺一遍，不管这次有没有重新解压。内容相同的文件跳过，不会重写。目标不存在时会连目录一起新建。
+- **限制**：
+  - 只接受 `public/` 下的普通文件。
+  - 不跟随符号链接。覆盖层里的链接、`bootstrap/server` 里作为上级目录的链接（如 `public/scripts/extensions/third-party`）、本身是链接的目标文件，都会被拒绝。
+  - 拒绝 `..`、绝对路径、空段这类越界路径。
+  - 不碰 `config.yaml`、`node_modules`、`third-party`。
+  - 单个文件出错只记原因，整体出错只记日志，都不影响启动。
+- **日志**：每次启动，启动日志 `files/android-tavern/logs/startup-*.log` 里都会写一行 `server 覆盖层：…`，列出覆盖了哪些、内容相同跳过哪些、拒绝了哪些及原因。没有 `overrides/` 目录时写「不存在，跳过」。
+- **用法**：`stdroid put <本地文件> overrides/public/<路径> --no-reload`，然后重启 App。只刷新页面不会生效，覆盖层只在启动时铺。
+- **撤销**：删掉 `overrides/` 里的文件，只是以后不再覆盖；`bootstrap/server` 里已经铺过去的那份不会自动还原。要么手动放回原版，要么等下次酒馆源码变化时被解压换回。
+- **实现**：`data/runtime/.../ServerOverlay.kt` 里的 `applyServerOverlay`、`resolveServerOverlayTarget`，由 `BootstrapSessionManager.runBootstrapAttempt` 调用。测试在 `ServerOverlayTest`。
+
+### 图标和应用名
+
+- App 名 `STDROID`。
+- 资源：`app/src/main/res/drawable/ic_launcher.png`、`ic_launcher_foreground.png`、`ic_launcher_background.xml`、`drawable-anydpi-v26/ic_launcher.xml`。
+- `ic_launcher_background.xml` 必须保持透明：`<solid android:color="@android:color/transparent" />`。改了图标后，记得检查 adaptive background。
+- 部分桌面会给透明的 adaptive icon 自动加底色或阴影，这不是 APK 资源的问题。
+
+### Stdroid JS-Slash-Runner 导入 API
+
+手机上的 8788 本机导入 API 只支持全局脚本：
 
 ```bash
 curl -f -X PUT \
@@ -312,109 +219,60 @@ curl -f -X PUT \
   "http://127.0.0.1:8788/api/import/js-slash-runner/global/model-direct-chatbox.js?displayName=%E6%A8%A1%E5%9E%8B%E7%9B%B4%E8%BF%9EChatbox"
 ```
 
-- URL 末尾的 `filename` 必须是稳定英文 key，只允许字母、数字、点、下划线、短横线，并要求 `.js` 结尾。
-- `displayName` 是 JS-Slash-Runner 里首次创建脚本时显示的中文名，需要 URL encode。
-- 重复导入同一个 `filename` 会按 `data.stdroidImportKey` 替换同一脚本，并保留旧脚本 `id`、启用状态和用户手动改过的 `name`。
-- 如果旧脚本没有 `stdroidImportKey`，导入时会尝试按英文名或 `displayName` 接管一次。
-- 返回 `reloadRequired: true` 时，刷新 Tavern 页面让 JS-Slash-Runner 重新读取脚本。
+- URL 末尾的文件名必须是稳定的英文 key，只能用字母、数字、点、下划线、短横线，并且以 `.js` 结尾。
+- `displayName` 是第一次创建脚本时在 JS-Slash-Runner 里显示的中文名，需要 URL encode。
+- 重复导入同一个文件名，会按 `data.stdroidImportKey` 替换同一个脚本，保留旧脚本的 `id`、启用状态和用户手动改过的 `name`。旧脚本没有 `stdroidImportKey` 时，会尝试按英文名或 `displayName` 接管一次。
+- 返回 `reloadRequired: true` 时，要刷新 Tavern 页面，让 JS-Slash-Runner 重新读取脚本。
+- 远程读写手机上 Stdroid 的内容（脚本、主题、角色卡等）用 `stdroid` CLI，见 `/root/workspace/stdroid-remote/README.md`。
 
 ## 常见问题和排查方向
 
 ### rootfs 或 runtime 资产缺失
 
-用户之前遇到过：
-
 ```text
 FileNotFoundException: bootstrap/rootfs/rootfs-fs.zip
 ```
 
-这通常说明 APK assets 里 rootfs 没打进去，或同步 runtime image 过程漏了资源。
+通常是 APK assets 里没打进 rootfs，或者同步 runtime image 时漏了资源。
 
 ### native 依赖缺失
-
-用户之前遇到过：
 
 ```text
 CANNOT LINK EXECUTABLE ".../libtermux-node.so": library "libcares.so" not found
 ```
 
-这说明 Android nativeLibraryDir 中缺少 node 依赖 so，优先检查 `android-tavern/app/src/main/jniLibs` 和构建打包产物。
+说明 nativeLibraryDir 里缺了 node 依赖的 so，先查 `android-tavern/app/src/main/jniLibs` 和打包产物。
 
 ### 透明图标仍显示底色
 
-先确认：
-
-- `ic_launcher_background.xml` 是透明。
-- `ic_launcher.png` 和 `ic_launcher_foreground.png` 四角 alpha 为 0。
-
-如果 APK 资源正常但桌面仍有底色，通常是系统 launcher 自动处理 adaptive icon。
+先确认 `ic_launcher_background.xml` 是透明的，`ic_launcher.png` 和 `ic_launcher_foreground.png` 的四角 alpha 为 0。APK 资源都正常、桌面上仍有底色的话，通常是系统 launcher 在处理 adaptive icon。
 
 ### 修改 SillyTavern 根目录 public/img/logo.png 不生效
 
-现在的做法：把图放进 server 覆盖层（见上文「server 覆盖层」），再重启 App，不要直接改 `bootstrap/server/public/img/logo.png`。直接改的话，下次升级只要酒馆源码有变化，就会被换回原版。用户的开屏 logo 是一只会动的透明底小象（APNG，扩展名仍是 `.png`），源文件在 VPS 的 `/root/workspace/st开发区/小象素材/elephant-idle-transparent.apng.png`：
+现在的做法：把图放进 server 覆盖层（见上文「server 覆盖层」），然后重启 App，不要直接改 `bootstrap/server/public/img/logo.png`。直接改的话，下次升级只要酒馆源码有变化，就会被换回原版。
+
+用户的开屏 logo 是一只会动的透明底小象，格式是 APNG，扩展名仍是 `.png`。源文件在 VPS 的 `/root/workspace/st开发区/小象素材/elephant-idle-transparent.apng.png`：
 
 ```bash
 stdroid put "/root/workspace/st开发区/小象素材/elephant-idle-transparent.apng.png" overrides/public/img/logo.png --no-reload
-# 重启 App 后，启动日志 startup-*.log 里应有：server 覆盖层：已覆盖 1 个 [public/img/logo.png]…
+# 重启 App 后，启动日志 startup-*.log 里应有一行 server 覆盖层：…，logo 出现在「已覆盖」或「内容相同跳过」里
 ```
 
 改了还是不生效时，按顺序查：
 
-- 启动日志里的 `server 覆盖层：` 那一行，看是被拒了（原因写在括号里），还是覆盖层路径写错。用户曾把 `public` 写成 `pubic`。
+- 启动日志里 `server 覆盖层：` 那一行：是被拒了（原因写在括号里），还是覆盖层路径写错了。用户曾把 `public` 写成 `pubic`。
 - 用 `run-as` 比对 `bootstrap/server/public/img/logo.png` 和 `data/server/overrides/public/img/logo.png` 的 md5。
 - WebView 缓存。
 - 实际加载的 URL 是不是这张图。
 
 ## 操作注意事项
 
-- 不要使用 `git reset --hard` 或 `git checkout --` 回滚用户改动，除非用户明确要求。
-- 推送前先 `git status --short`。
-- 合并上游前先 `git fetch origin --prune --tags`。
-- 用户 fork 推送优先 SSH，不要使用明文 token。
-- 构建成功后直接使用 `android-tavern/app/build/outputs/apk/debug/app-debug.apk`。
-- 修改设置页时要同步更新 `SettingsTabTest`。
-- 修改图标后务必检查 adaptive background。
-- 备份、聊天记录、角色、世界书相关删除功能要非常谨慎，默认只做安全清理。
-- 升级内置 SillyTavern 版本后，惰性桩默认不生效（`tavern-startup-preload.cjs` 里的 `LAZY_SUPPORTED_TAVERN_VERSIONS` 只列了验证过的版本）。要先核对上游 `src/endpoints/vectors.js`、`src/users.js`、`src/transformers.js` 对这三个包的用法没变，再把新版本号加进去。
-
-## 快速接手流程
-
-1. 进入仓库：
-
-```bash
-cd /root/workspace/SillyDroid
-```
-
-2. 看当前状态：
-
-```bash
-git status --short
-git branch --show-current
-git log --oneline --decorate -8
-```
-
-3. 如需检查上游：
-
-```bash
-git fetch origin --prune --tags
-git rev-list --left-right --count custom/st-shell...origin/master
-git log --oneline custom/st-shell..origin/master
-```
-
-4. 改完后至少跑：
-
-```bash
-bash scripts/stdroid-gha-build.sh
-```
-
-5. APK 产物路径：
-
-```text
-/root/workspace/SillyDroid/artifacts/releases/android-apk/app-debug.apk
-```
-
-6. 用户要求推送时：
+- 不要用 `git reset --hard` 或 `git checkout --` 回滚用户的改动，除非用户明确要求。
+- 合并上游前先 `git fetch origin --prune --tags`。合并后跑一遍 gradle 单测，上游改动常让定制部分的测试挂掉。
+- 用户要求推送 `custom/st-shell` 时，用 SSH，不要用明文 token：
 
 ```bash
 GIT_SSH_COMMAND='ssh -F /config/.ssh/config' git push github-xiu14:xiu14/SillyDroid.git custom/st-shell
 ```
+
+- 不要在文档、提交信息或命令输出里暴露用户提供过的 token。
