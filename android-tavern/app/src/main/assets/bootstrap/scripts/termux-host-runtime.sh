@@ -139,6 +139,20 @@ install_git_core_links() {
 		return 0
 	fi
 
+	# 每次 APK 升级 nativeLibraryDir 都会换路径，签名对不上，要把 150 多个链接全部重建一遍。
+	# 下面的 shell 循环每个链接要起 readlink / rm / ln 三个进程，升级后首启会因此多等 6 秒左右；
+	# 先交给一个 Node 进程批量重建（逻辑与下面逐条对应），失败或结果对不上时再退回 shell 循环。
+	# NODE_OPTIONS 置空，免得 npm shim 之类的预加载跟着加载。
+	git_core_links_helper="${BOOTSTRAP_ROOT:-}/scripts/sync-git-core-links.cjs"
+	if [ -n "${BOOTSTRAP_ROOT:-}" ] && [ -f "$git_core_links_helper" ] && [ -f "${TERMUX_NODE_BIN:-}" ]; then
+		if NODE_OPTIONS= "$TERMUX_NODE_BIN" "$git_core_links_helper" \
+			"$link_dir" "$git_core_dir" "$TERMUX_GIT_BIN" "$TERMUX_GIT_REMOTE_HTTP_BIN" "$signature" \
+			&& git_core_links_ready "$link_dir" "$signature"; then
+			return 0
+		fi
+		echo "git-core 链接批量重建失败，改用逐个创建。" >&2
+	fi
+
 	rm -f \
 		"$link_dir"/git \
 		"$link_dir"/git-* \

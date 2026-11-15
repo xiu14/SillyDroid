@@ -139,6 +139,24 @@ class ConsoleRuntimeRepositoryTest {
     }
 
     @Test
+    fun `git core links rebuild in one node process with shell fallback`() {
+        val script = resolveAndroidProjectFile(
+            "app/src/main/assets/bootstrap/scripts/termux-host-runtime.sh"
+        ).readText()
+        val helper = resolveAndroidProjectFile(
+            "app/src/main/assets/bootstrap/scripts/sync-git-core-links.cjs"
+        ).readText()
+
+        // APK 升级后签名对不上时先用 Node 批量重建（否则逐个起进程要 6 秒左右），失败再退回 shell 循环。
+        assertTrue(script.contains("""git_core_links_helper="${'$'}{BOOTSTRAP_ROOT:-}/scripts/sync-git-core-links.cjs""""))
+        assertTrue(script.contains("""NODE_OPTIONS= "${'$'}TERMUX_NODE_BIN" "${'$'}git_core_links_helper""""))
+        assertTrue(script.contains("""for git_core_entry in "${'$'}git_core_dir"/git-*; do"""))
+        assertTrue(helper.contains(".sillydroid-git-core-links.signature"))
+        assertTrue(helper.contains("linkTarget === '../libexec/git-core/git'"))
+        assertTrue(helper.contains("process.exit(1)"))
+    }
+
+    @Test
     fun `server startup defaults to fast host command profile without changing tavern config`() {
         val startServerScript = resolveAndroidProjectFile(
             "app/src/main/assets/bootstrap/scripts/start-server.sh"
