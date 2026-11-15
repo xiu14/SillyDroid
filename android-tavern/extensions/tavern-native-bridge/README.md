@@ -29,6 +29,15 @@ Status timeline:
 - `generation_content_started` ("writing"): the streamed text contains a
   `<content>` tag.
 
+Tavern Helper (JS-Slash-Runner) `generate` / `generateRaw` calls with
+`should_silence: true` (background jobs such as auto summaries) are ignored.
+Tavern Helper emits `GENERATION_AFTER_COMMANDS('normal', {})` for them but
+never `GENERATION_ENDED`, because silenced calls do not touch the stop button,
+so they would leave the status stuck at "thinking". The bridge recognises them
+through the preceding `js_generation_requested` event and the empty params
+object (SillyTavern's own generations always pass params). Non-silenced calls
+still show up and end through `GENERATION_ENDED` when the stop button hides.
+
 The chat view is scrolled to the latest message every time SillyTavern renders
 a chat (`CHAT_CHANGED`, including reloading the same chat). Manual navigation
 such as `/chat-jump` or touching the page cancels any pending scroll attempts.

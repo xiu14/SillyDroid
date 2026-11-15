@@ -9,6 +9,8 @@
     const PENDING_DEDUPE_MS = 60 * 1000;
     // 生成请求：chat-completions / text-completions / kobold 等后端的 /generate。
     const GENERATE_URL_PATTERN = /\/api\/(?:backends\/[\w-]+|novelai|horde)\/generate(?:[?#]|$)/;
+    // 酒馆助手静默生成从 js_generation_requested 到 GENERATION_AFTER_COMMANDS 只隔处理输入的一小段，超时没对上就作废。
+    const SILENT_HELPER_REQUEST_TTL_MS = 30 * 1000;
 
     if (typeof window === 'undefined') return;
 
@@ -31,6 +33,7 @@
         pendingGeneration: null,
         startedEmitted: false,
     };
+    runtime.silentHelperRequests ??= [];
 
     if (runtime.initialized) {
         window.__tavernNativeBridgeExtensionReady = true;
@@ -358,6 +361,20 @@
         });
     }
 
+    /**
+     * 这次 GENERATION_AFTER_COMMANDS 是不是酒馆助手静默生成发的。ST 自己的生成 params 带 quiet_prompt 等字段，
+     * 酒馆助手固定传空对象，靠这一点区分，免得静默请求排队时把同时发生的正常回复也吞掉。
+     */
+    function consumeSilentHelperGeneration(params) {
+        const now = Date.now();
+        const queue = runtime.silentHelperRequests;
+        while (queue.length && now - queue[0] > SILENT_HELPER_REQUEST_TTL_MS) queue.shift();
+        if (!queue.length) return false;
+        if (!params || typeof params !== 'object' || Object.keys(params).length) return false;
+        queue.shift();
+        return true;
+    }
+
     function attachListeners(context, eventTypes) {
         if (runtime.listenersAttached) return true;
         if (!context?.eventSource || !eventTypes.GENERATION_STARTED) return false;
@@ -376,10 +393,18 @@
             };
         });
 
+        // 酒馆助手的 generate / generateRaw 先发 js_generation_requested，再发 GENERATION_AFTER_COMMANDS('normal', {})。
+        // should_silence 的后台生成（自动总结之类）不绑停止按钮，结束时不会有 GENERATION_ENDED，流体云会一直挂着，所以整轮忽略。
+        context.eventSource.on('js_generation_requested', (generationId, kind, config) => {
+            if (!config?.should_silence) return;
+            runtime.silentHelperRequests.push(Date.now());
+        });
+
         if (eventTypes.GENERATION_AFTER_COMMANDS) {
             // 这时还在组 prompt、等首包，只算「准备中」；「在想了」等首包（见 installFirstPacketHook）。
             context.eventSource.on(eventTypes.GENERATION_AFTER_COMMANDS, (type, params, dryRun) => {
                 if (dryRun) return;
+                if (consumeSilentHelperGeneration(params)) return;
                 runtime.isGenerating = true;
                 runtime.pendingGeneration = { type: type || 'normal', params: params || null };
                 emitGenerationPreparing(type);
