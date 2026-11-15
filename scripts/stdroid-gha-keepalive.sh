@@ -9,6 +9,7 @@ set -euo pipefail
 # 做法：在 fork 的 ci/stdroid 当前提交上追加一个空提交（Stdroid-CI-Mode: keepalive），普通推送、不强推；
 #   workflow 只把 full / gradle 两份缓存各拉一次，刷新「最后使用时间」，不编译、不存缓存，约 1 分钟。
 #   有构建在跑或排队时跳过，留给下一天。fork 是公开仓库，Actions 不占分钟额度。
+#   每次运行先清理旧缓存：full / gradle 两种各留最近用过的一份（仓库缓存上限 10GB）。
 # cron（日志在 artifacts/，已被 gitignore）：
 #   23 5 * * * /root/workspace/SillyDroid/scripts/stdroid-gha-keepalive.sh >> /root/workspace/SillyDroid/artifacts/gha-keepalive.log 2>&1
 
@@ -24,7 +25,7 @@ force='false'
 case "${1:-}" in
     '') ;;
     --force) force='true' ;;
-    -h|--help) sed -n '4,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,3\}//'; exit 0 ;;
+    -h|--help) sed -n '4,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,3\}//'; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 1 ;;
 esac
 
@@ -38,8 +39,39 @@ if [[ "$remote_url" != *"$repo"* ]]; then
     exit 1
 fi
 
+busy_runs() {
+    gh run list -R "$repo" -w "$workflow" -L 20 --json status -q '[.[] | select(.status != "completed")] | length'
+}
+
+caches_json="$(gh cache list -R "$repo" -L 100 --json id,key,lastAccessedAt,sizeInBytes)"
+
+# 清理：仓库缓存上限 10GB，构建脚本或 gradle 配置一改就会换 key 另存一份（每份 1～1.5GB），
+# 旧的不会再被用到。full / gradle 两种各留最近用过的一份，其余删掉；有构建在跑时不动，免得和它要存的缓存撞上。
+if (( $(busy_runs) == 0 )); then
+    prune="$(python3 -c '
+import json, sys
+caches = json.loads(sys.argv[1])
+for prefix in ("stdroid-build-", "stdroid-gradle-"):
+    group = sorted((c for c in caches if c["key"].startswith(prefix)), key=lambda c: c["lastAccessedAt"], reverse=True)
+    for c in group[1:]:
+        print(c["id"], c["sizeInBytes"] // 1048576, c["key"])
+' "$caches_json")"
+    if [[ -n "$prune" ]]; then
+        freed=0
+        while read -r cache_id size_mb cache_key; do
+            if gh cache delete "$cache_id" -R "$repo" >/dev/null 2>&1; then
+                freed=$(( freed + size_mb ))
+                log "删除旧缓存：$cache_key（${size_mb}MB）"
+            else
+                log "删除旧缓存失败：$cache_key"
+            fi
+        done <<< "$prune"
+        log "清理完成，腾出约 ${freed}MB"
+        caches_json="$(gh cache list -R "$repo" -L 100 --json id,key,lastAccessedAt,sizeInBytes)"
+    fi
+fi
+
 # 每种缓存取最近一次使用时间；只要有一种超过阈值就触发。
-caches_json="$(gh cache list -R "$repo" -L 100 --json key,lastAccessedAt)"
 stale="$(python3 -c '
 import datetime, json, sys
 caches, max_days = json.loads(sys.argv[1]), float(sys.argv[2])
@@ -68,8 +100,7 @@ if [[ "$summary" != *天没用* ]]; then
     exit 0
 fi
 
-busy="$(gh run list -R "$repo" -w "$workflow" -L 20 --json status \
-    -q '[.[] | select(.status != "completed")] | length')"
+busy="$(busy_runs)"
 if (( busy > 0 )); then
     log "有 $busy 个构建在跑或排队，今天跳过（它们本身就会刷新缓存）"
     exit 0

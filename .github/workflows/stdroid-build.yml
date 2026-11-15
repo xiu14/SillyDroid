@@ -136,7 +136,7 @@ jobs:
             ~/.gradle/wrapper
             artifacts/releases/rootfs
             artifacts/releases/server-source
-          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
             stdroid-build-${{ runner.os }}-
@@ -148,7 +148,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-gradle-${{ runner.os }}-
 
@@ -165,7 +165,7 @@ jobs:
             ~/.gradle/wrapper
             artifacts/releases/rootfs
             artifacts/releases/server-source
-          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-${{ hashFiles('scripts/*.sh', '!scripts/stdroid-gha-build.sh', '!scripts/stdroid-gha-keepalive.sh', 'sillydroid-build-config.json', 'android-tavern/build.gradle.kts', 'android-tavern/settings.gradle.kts', 'android-tavern/app/build.gradle.kts', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-build-${{ runner.os }}-${{ env.STDROID_TAVERN_TAG }}-
             stdroid-build-${{ runner.os }}-
@@ -178,7 +178,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle.properties', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
+          key: stdroid-gradle-${{ runner.os }}-${{ hashFiles('android-tavern/**/*.gradle.kts', 'android-tavern/gradle/libs.versions.toml', 'gradle/wrapper/*', 'gradlew') }}
           restore-keys: |
             stdroid-gradle-${{ runner.os }}-
 
