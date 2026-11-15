@@ -161,6 +161,18 @@ Node 侧（`android-tavern/app/src/main/assets/bootstrap/scripts/tavern-startup-
 
 `server-source.zip` 仍是原样的上游源码，这些都是进程内处理。排查问题时设置环境变量 `SILLYDROID_STARTUP_PRELOAD=off` 可整体关闭预加载。
 
+### server 覆盖层（升级后保留对内置酒馆程序文件的改动）
+
+App 自带的酒馆程序在 `files/android-tavern/bootstrap/server`（`paths.serverDir`）。升级包里的酒馆源码一变（`server-source-manifest.json` 不同），`prepareServerArchives()` 就会把源码包覆盖解压进去，同名文件直接被换回原版。解压时唯一跳过的是根 `config.yaml`。所以**不要直接改 `bootstrap/server` 里的文件**，改动放进覆盖层：
+
+- 位置：`files/android-tavern/data/server/overrides/`（`paths.serverDataDir/overrides`，也就是 `stdroid` 远程编辑根目录下的 `overrides/`）。结构跟 `bootstrap/server` 一一对应，例如 `overrides/public/img/logo.png` 对应 `bootstrap/server/public/img/logo.png`。
+- 时机：每次启动，在 server 资产准备完之后、启动 Node 之前铺一遍，不管这次有没有重新解压。内容相同的文件跳过，不会重写。目标不存在时会连目录一起新建。
+- 限制：只接受 `public/` 下的普通文件。不跟随符号链接，覆盖层里的链接、`bootstrap/server` 里的上级目录链接（如 `public/scripts/extensions/third-party`）和目标链接都会拒绝。拒绝 `..`、绝对路径、空段这类越界路径，也不碰 `config.yaml`、`node_modules`、`third-party`。单个文件出错只记原因，整体出错只记日志，都不影响启动。
+- 日志：每次启动在启动日志 `files/android-tavern/logs/startup-*.log` 里写一行 `server 覆盖层：…`，列出覆盖了哪些、内容相同跳过哪些、拒绝了哪些及原因。没有 `overrides/` 时写「不存在，跳过」。
+- 用法：`stdroid put <本地文件> overrides/public/<路径> --no-reload`，再重启 App。只刷新页面不会生效，覆盖层只在启动时铺。
+- 撤销：删掉 `overrides/` 里的文件只是不再覆盖，`bootstrap/server` 里已经铺过去的那份不会自动还原。要么手动放回原版，要么等下次酒馆源码变化时被解压换回。
+- 实现：`data/runtime/.../ServerOverlay.kt`（`applyServerOverlay`、`resolveServerOverlayTarget`），在 `BootstrapSessionManager.runBootstrapAttempt` 里调用。测试在 `ServerOverlayTest`。
+
 ### 图标和应用名
 
 用户要求：
@@ -339,14 +351,19 @@ CANNOT LINK EXECUTABLE ".../libtermux-node.so": library "libcares.so" not found
 
 ### 修改 SillyTavern 根目录 public/img/logo.png 不生效
 
-可能原因：
+现在的做法：把图放进 server 覆盖层（见上文「server 覆盖层」），再重启 App，不要直接改 `bootstrap/server/public/img/logo.png`。直接改的话，下次升级只要酒馆源码有变化，就会被换回原版。用户的开屏 logo 是一只会动的透明底小象（APNG，扩展名仍是 `.png`），源文件在 VPS 的 `/root/workspace/st开发区/小象素材/elephant-idle-transparent.apng.png`：
 
+```bash
+stdroid put "/root/workspace/st开发区/小象素材/elephant-idle-transparent.apng.png" overrides/public/img/logo.png --no-reload
+# 重启 App 后，启动日志 startup-*.log 里应有：server 覆盖层：已覆盖 1 个 [public/img/logo.png]…
+```
+
+改了还是不生效时，按顺序查：
+
+- 启动日志里的 `server 覆盖层：` 那一行，看是被拒了（原因写在括号里），还是覆盖层路径写错。用户曾把 `public` 写成 `pubic`。
+- 用 `run-as` 比对 `bootstrap/server/public/img/logo.png` 和 `data/server/overrides/public/img/logo.png` 的 md5。
 - WebView 缓存。
-- 文件路径写错，用户曾把 `public` 写成 `pubic`。
-- SillyTavern 前端资源有构建产物或缓存版本。
-- APP 内外目录不是同一份。
-
-优先让用户清 WebView 缓存、确认路径、确认实际加载 URL。
+- 实际加载的 URL 是不是这张图。
 
 ## 操作注意事项
 
