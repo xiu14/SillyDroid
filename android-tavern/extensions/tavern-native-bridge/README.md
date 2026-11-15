@@ -82,3 +82,20 @@ time, the shell does not inject the old hook.
 
 This keeps old SillyTavern instances working while allowing newer instances to
 use the cleaner extension-based bridge.
+
+## Startup timeline
+
+On `APP_READY` the extension writes one startup timeline to the host diagnostics
+log (`category=web_performance`, via `recordWebPerformanceDiagnostic`). It covers
+the frontend part of "tap icon → chat usable"; the Node part is in the startup log.
+
+```text
+event=tavern_startup_timeline timeOrigin=<epoch ms> responseEnd domContentLoaded load bridgeEval bridgeAttach appInitialized appReady exact
+event=tavern_startup_resources part=<n> <path>@<startMs>+<durationMs> ...
+```
+
+All times are milliseconds relative to the page `timeOrigin`. The resource lines
+list API requests, third-party extension files and anything slower than 100 ms
+that started before `APP_READY` (`api:` = `/api/`, `ext:` = third-party extension).
+`exact=0` means the extension subscribed after the splash screen was gone, so
+`appReady` is only the time of the auto-fired listener.

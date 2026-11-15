@@ -42,6 +42,14 @@
 
     runtime.initialized = true;
     window.__tavernNativeBridgeExtensionReady = true;
+    // 启动时间线：本扩展 loading_order 最靠前，被加载的时刻约等于酒馆前端开始装载第三方扩展的时刻。
+    runtime.bridgeEvalMs = performance.now();
+    // Resource Timing 缓冲区默认 250 条，页面加载完就用掉两百多条，初始化期间的请求会被丢掉。
+    try {
+        performance.setResourceTimingBufferSize(2000);
+    } catch {
+        // ignore
+    }
 
     function emit(name, payload = {}) {
         try {
@@ -64,6 +72,97 @@
             console.warn(`[${MODULE_NAME}] emit failed`, error);
             return false;
         }
+    }
+
+    // ---- 启动时间线（诊断用） ----
+    // 「点开 → 能聊天」分三段：Node 启动、页面加载、酒馆前端初始化（firstLoadInit 里一长串 await）。
+    // 前两段宿主日志里已有，这里补第三段：APP_INITIALIZED / APP_READY 的时刻，加上初始化期间
+    // 每个 API 请求和第三方扩展脚本的起止时刻（Resource Timing 事后读取，扩展加载之前的请求也在）。
+    // 时间都相对页面 timeOrigin，timeOrigin 本身是绝对时间，用来和宿主启动日志对齐。
+    const STARTUP_TIMELINE_LINE_LIMIT = 3800;
+
+    function compactResourcePath(url) {
+        try {
+            const parsed = new URL(url, location.href);
+            if (parsed.origin !== location.origin) return `ext-host:${parsed.host}`;
+            return parsed.pathname
+                .replace(/^\/scripts\/extensions\/third-party\//, 'ext:')
+                .replace(/^\/scripts\/extensions\//, 'sysext:')
+                .replace(/^\/api\//, 'api:');
+        } catch {
+            return String(url).slice(0, 80);
+        }
+    }
+
+    function collectStartupResources(untilMs) {
+        const entries = performance.getEntriesByType('resource')
+            .filter((entry) => entry.startTime <= untilMs)
+            .filter((entry) => {
+                const path = compactResourcePath(entry.name);
+                return entry.initiatorType === 'fetch'
+                    || entry.initiatorType === 'xmlhttprequest'
+                    || path.startsWith('ext:')
+                    || entry.duration >= 100;
+            })
+            .sort((left, right) => left.startTime - right.startTime);
+        return entries.map((entry) => `${compactResourcePath(entry.name)}@${Math.round(entry.startTime)}+${Math.round(entry.duration)}`);
+    }
+
+    function sendStartupTimeline() {
+        if (runtime.startupTimelineSent) return;
+        runtime.startupTimelineSent = true;
+        try {
+            const bridge = window.AndroidBridge || window.SillyDroidAndroidHostBridge;
+            if (!bridge || typeof bridge.recordWebPerformanceDiagnostic !== 'function') return;
+            const nav = performance.getEntriesByType('navigation')[0];
+            const round = (value) => (Number.isFinite(value) ? Math.round(value) : -1);
+            const head = [
+                'event=tavern_startup_timeline',
+                `timeOrigin=${Math.round(performance.timeOrigin)}`,
+                `responseEnd=${round(nav?.responseEnd)}`,
+                `domContentLoaded=${round(nav?.domContentLoadedEventEnd)}`,
+                `load=${round(nav?.loadEventEnd)}`,
+                `bridgeEval=${round(runtime.bridgeEvalMs)}`,
+                `bridgeAttach=${round(runtime.startupSubscribedMs)}`,
+                `appInitialized=${round(runtime.appInitializedMs)}`,
+                `appReady=${round(runtime.appReadyMs)}`,
+                // 订阅时加载遮罩已经没了，说明 APP_READY 早就发过、拿到的是自动补触发的时刻，不准。
+                `exact=${runtime.startupOverlayAtSubscribe ? 1 : 0}`,
+            ].join(' ');
+            bridge.recordWebPerformanceDiagnostic(head);
+
+            const resources = collectStartupResources(runtime.appReadyMs ?? performance.now());
+            let line = 'event=tavern_startup_resources part=1';
+            let part = 1;
+            for (const item of resources) {
+                if (line.length + item.length + 1 > STARTUP_TIMELINE_LINE_LIMIT) {
+                    bridge.recordWebPerformanceDiagnostic(line);
+                    part += 1;
+                    line = `event=tavern_startup_resources part=${part}`;
+                }
+                line += ` ${item}`;
+            }
+            bridge.recordWebPerformanceDiagnostic(line);
+        } catch (error) {
+            console.warn(`[${MODULE_NAME}] startup timeline failed`, error);
+        }
+    }
+
+    function installStartupTimeline(context, eventTypes) {
+        if (runtime.startupTimelineInstalled || !eventTypes.APP_READY) return;
+        runtime.startupTimelineInstalled = true;
+        runtime.startupSubscribedMs = performance.now();
+        runtime.startupOverlayAtSubscribe = Boolean(document.querySelector('.splash-screen'));
+        if (eventTypes.APP_INITIALIZED) {
+            context.eventSource.on(eventTypes.APP_INITIALIZED, () => {
+                runtime.appInitializedMs ??= performance.now();
+            });
+        }
+        context.eventSource.on(eventTypes.APP_READY, () => {
+            runtime.appReadyMs ??= performance.now();
+            // 等 APP_READY 的其他监听器跑完再读 Resource Timing，不占初始化的关键路径。
+            setTimeout(sendStartupTimeline, 0);
+        });
     }
 
     function getContext() {
@@ -465,6 +564,7 @@
             const eventTypes = getEventTypes(context);
             if (!context?.eventSource || !eventTypes) return false;
 
+            installStartupTimeline(context, eventTypes);
             installChatScrollHooks(context, eventTypes);
             const attached = attachListeners(context, eventTypes);
             if (attached) {
