@@ -435,6 +435,12 @@ class BootstrapSessionManager(
                 )
             }
 
+            // 不管这次有没有重新解压 server 源码，都把 overrides/ 里用户的自定义文件铺回 serverDir；出错只记日志，不挡启动。
+            appendStartupLog(
+                runCatching { applyServerOverlay(paths).toLogLine() }
+                    .getOrElse { error -> "server 覆盖层：应用失败，已跳过：${error.javaClass.simpleName}: ${error.message.orEmpty()}" }
+            )
+
             settingsConfig.syncStoredPortFromFile()
             val servicePort = hostPreferences.servicePort
             val resolvedLocalUrl = localServiceUrl()
