@@ -20,29 +20,52 @@ export PATH
 
 cd "$TAVERN_SERVER_DIR"
 
+# 这里每次冷启动都会跑，Android 上 fork/exec 一个小命令要 15~20ms。
+# 下面的目录、配置迁移和软链接在绝大多数启动里都没有变化，先用 shell 内置的 test 判断，真要改时才起进程。
+ensure_dirs() {
+    for ensure_dirs_path in "$@"; do
+        if [ ! -d "$ensure_dirs_path" ]; then
+            mkdir -p "$@"
+            return
+        fi
+    done
+}
+
 # 用户数据必须落到宿主持久目录，避免 APK 覆盖安装后把角色、聊天和配置一起替换掉。
-mkdir -p "$TAVERN_DATA_ROOT/config" "$TAVERN_DATA_ROOT/data" "$TAVERN_DATA_ROOT/plugins" "$TAVERN_DATA_ROOT/extensions"
+ensure_dirs "$TAVERN_DATA_ROOT/config" "$TAVERN_DATA_ROOT/data" "$TAVERN_DATA_ROOT/plugins" "$TAVERN_DATA_ROOT/extensions"
 
 # 根 config.yaml 是唯一真实配置文件；旧 data/server/config/config.yaml 只在迁移时读取一次，不再维护。
-sh "$BOOTSTRAP_ROOT/scripts/migrate-tavern-root-config.sh"
+# 根配置已经是普通文件时迁移脚本什么也不做（它的第一条判断），这里直接跳过，省一次 sh 进程。
+if [ ! -f "$TAVERN_SERVER_DIR/config.yaml" ] || [ -L "$TAVERN_SERVER_DIR/config.yaml" ]; then
+    sh "$BOOTSTRAP_ROOT/scripts/migrate-tavern-root-config.sh"
+fi
 
 directory_has_child() {
     find "$1" -mindepth 1 -maxdepth 1 -print 2>/dev/null | read first_child
 }
 
-# 如果上游底包自带默认插件，首次启动先复制到持久目录，再切到外置目录，避免更新后覆盖用户改动。
-if [ -d plugins ] && [ ! -L plugins ] && ! directory_has_child "$TAVERN_DATA_ROOT/plugins"; then
-    cp -R plugins/. "$TAVERN_DATA_ROOT/plugins/"
-fi
-rm -rf plugins
-ln -sfn "$TAVERN_DATA_ROOT/plugins" plugins
+# 软链接已经指向持久目录时保持原样；test -ef 比较的是解析后的目录本身。
+persistent_link_ready() {
+    [ -L "$1" ] && [ "$1" -ef "$2" ]
+}
 
-mkdir -p public/scripts/extensions
-if [ -d public/scripts/extensions/third-party ] && [ ! -L public/scripts/extensions/third-party ] && ! directory_has_child "$TAVERN_DATA_ROOT/extensions"; then
-    cp -R public/scripts/extensions/third-party/. "$TAVERN_DATA_ROOT/extensions/"
+# 如果上游底包自带默认插件，首次启动先复制到持久目录，再切到外置目录，避免更新后覆盖用户改动。
+if ! persistent_link_ready plugins "$TAVERN_DATA_ROOT/plugins"; then
+    if [ -d plugins ] && [ ! -L plugins ] && ! directory_has_child "$TAVERN_DATA_ROOT/plugins"; then
+        cp -R plugins/. "$TAVERN_DATA_ROOT/plugins/"
+    fi
+    rm -rf plugins
+    ln -sfn "$TAVERN_DATA_ROOT/plugins" plugins
 fi
-rm -rf public/scripts/extensions/third-party
-ln -sfn "$TAVERN_DATA_ROOT/extensions" public/scripts/extensions/third-party
+
+ensure_dirs public/scripts/extensions
+if ! persistent_link_ready public/scripts/extensions/third-party "$TAVERN_DATA_ROOT/extensions"; then
+    if [ -d public/scripts/extensions/third-party ] && [ ! -L public/scripts/extensions/third-party ] && ! directory_has_child "$TAVERN_DATA_ROOT/extensions"; then
+        cp -R public/scripts/extensions/third-party/. "$TAVERN_DATA_ROOT/extensions/"
+    fi
+    rm -rf public/scripts/extensions/third-party
+    ln -sfn "$TAVERN_DATA_ROOT/extensions" public/scripts/extensions/third-party
+fi
 
 if [ -f ./dependency-env.sh ]; then
     # dependency-env.sh 由 stage 4 根据 dependency manifests 聚合生成。
@@ -97,7 +120,26 @@ esac
 # 这里仅在用户未显式设置 UV_THREADPOOL_SIZE 时，按设备 CPU 核数自动取一个更合理的值；
 # clamp 到 4..16，避免单核机器退化到比默认更小、巨核机器设过大反而多占内存。
 if [ -z "${UV_THREADPOOL_SIZE:-}" ]; then
-    uv_cpu_count="$(nproc 2>/dev/null || true)"
+    # 优先用内置 read 读 sysfs 的在线核范围（如 0-7），省一次 nproc 进程；格式不认识时再退回 nproc。
+    uv_cpu_count=""
+    uv_cpu_range=""
+    if [ -r /sys/devices/system/cpu/online ]; then
+        IFS= read -r uv_cpu_range < /sys/devices/system/cpu/online || true
+    fi
+    case "$uv_cpu_range" in
+        [0-9]*-[0-9]*)
+            case "$uv_cpu_range" in
+                *[!0-9-]*|*-*-*)
+                    ;;
+                *)
+                    uv_cpu_count=$(( ${uv_cpu_range#*-} - ${uv_cpu_range%-*} + 1 ))
+                    ;;
+            esac
+            ;;
+    esac
+    if [ -z "$uv_cpu_count" ]; then
+        uv_cpu_count="$(nproc 2>/dev/null || true)"
+    fi
     case "$uv_cpu_count" in
         ''|*[!0-9]*)
             uv_cpu_count="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 0)"
@@ -139,7 +181,8 @@ start_st_remote_backup() {
     sh "$helper" "$NODE_BIN" || true
 }
 
-ST_REMOTE_BACKUP_PID="$(start_st_remote_backup)"
+# 备份 sidecar 等酒馆 Node 拉起之后再启动（见下文），它的辅助脚本要起好几个进程，不该挡在酒馆前面。
+ST_REMOTE_BACKUP_PID=""
 TAVERN_PID=""
 cleanup_done=0
 
@@ -185,6 +228,8 @@ fi
     --dataRoot "$TAVERN_DATA_ROOT/data" \
     --configPath "$TAVERN_SERVER_DIR/config.yaml" &
 TAVERN_PID="$!"
+
+ST_REMOTE_BACKUP_PID="$(start_st_remote_backup)"
 
 wait "$TAVERN_PID"
 exit_code="$?"

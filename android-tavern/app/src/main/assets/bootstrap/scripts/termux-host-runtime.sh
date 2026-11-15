@@ -20,8 +20,30 @@ assert_dir() {
 	fi
 }
 
+# 每次启动都要走这里，Android 上 fork/exec 一个小命令要 15~20ms，所以热路径只用 shell 内置命令：
+# 用 test -ef 判断链接解析后和目标是同一个文件，不再 $(readlink) 起子进程。
+# APK 升级后旧 nativeLibraryDir 消失，-ef 为假，照样会重建链接。
 link_target_matches() {
-	[ -L "$1" ] && [ "$(readlink "$1" 2>/dev/null || true)" = "$2" ]
+	[ -L "$1" ] && [ "$1" -ef "$2" ]
+}
+
+# 目录都已存在时不起 mkdir 进程。
+ensure_dirs() {
+	for ensure_dirs_path in "$@"; do
+		if [ ! -d "$ensure_dirs_path" ]; then
+			mkdir -p "$@"
+			return
+		fi
+	done
+}
+
+# 只删确实存在的旧条目，没有要删的就不起 rm 进程。
+remove_stale_entries() {
+	for remove_stale_path in "$@"; do
+		if [ -e "$remove_stale_path" ] || [ -L "$remove_stale_path" ]; then
+			rm -f "$remove_stale_path"
+		fi
+	done
 }
 
 ensure_symlink() {
@@ -35,21 +57,15 @@ ensure_symlink() {
 	ln -s "$link_target" "$link_path"
 }
 
+# 要保留的链接交给 ensure_symlink：已经正确就不动，不对才删掉重建。
+# 以前这里先无条件 rm -f 全部链接，导致每次启动都要重建一遍、多起二十来个进程。
 install_termux_command_links() {
 	link_dir="$1"
-	mkdir -p "$link_dir"
-	rm -f \
-		"$link_dir/node" \
-		"$link_dir/git" \
-		"$link_dir/curl" \
-		"$link_dir/sh" \
-		"$link_dir/bash" \
-		"$link_dir/npm" \
-		"$link_dir/npx" \
-		"$link_dir/remote-http" \
-		"$link_dir/remote-https" \
-		"$link_dir/remote-ftp" \
-		"$link_dir/remote-ftps"
+	ensure_dirs "$link_dir"
+	remove_stale_entries "$link_dir/npm" "$link_dir/npx"
+	if [ -z "${TERMUX_BASH_BIN:-}" ] || [ ! -f "$TERMUX_BASH_BIN" ]; then
+		remove_stale_entries "$link_dir/bash"
+	fi
 	ensure_symlink "$TERMUX_NODE_BIN" "$link_dir/node"
 	ensure_symlink "$TERMUX_GIT_BIN" "$link_dir/git"
 	ensure_symlink "$TERMUX_CURL_BIN" "$link_dir/curl"
@@ -66,19 +82,19 @@ install_termux_command_links() {
 
 install_termux_server_fast_command_links() {
 	link_dir="$1"
-	mkdir -p "$link_dir"
-	rm -f \
-		"$link_dir/node" \
+	ensure_dirs "$link_dir"
+	# 快速模式故意不暴露 Git，旧的 git / remote helper 链接要清掉。
+	remove_stale_entries \
 		"$link_dir/git" \
-		"$link_dir/curl" \
-		"$link_dir/sh" \
-		"$link_dir/bash" \
 		"$link_dir/npm" \
 		"$link_dir/npx" \
 		"$link_dir/remote-http" \
 		"$link_dir/remote-https" \
 		"$link_dir/remote-ftp" \
 		"$link_dir/remote-ftps"
+	if [ -z "${TERMUX_BASH_BIN:-}" ] || [ ! -f "$TERMUX_BASH_BIN" ]; then
+		remove_stale_entries "$link_dir/bash"
+	fi
 	ensure_symlink "$TERMUX_NODE_BIN" "$link_dir/node"
 	ensure_symlink "$TERMUX_CURL_BIN" "$link_dir/curl"
 	ensure_symlink "$TERMUX_SH_BIN" "$link_dir/sh"
@@ -99,7 +115,10 @@ git_core_links_ready() {
 	signature="$2"
 	signature_file="$link_dir/.sillydroid-git-core-links.signature"
 	[ -f "$signature_file" ] || return 1
-	[ "$(cat "$signature_file" 2>/dev/null || true)" = "$signature" ] || return 1
+	# 签名文件写入时不带换行，read 读到 EOF 会返回非零，但变量已经赋上值。
+	saved_signature=""
+	IFS= read -r saved_signature < "$signature_file" || true
+	[ "$saved_signature" = "$signature" ] || return 1
 	link_target_matches "$link_dir/git" "$TERMUX_GIT_BIN" || return 1
 	link_target_matches "$link_dir/git-remote-http" "$TERMUX_GIT_REMOTE_HTTP_BIN" || return 1
 	link_target_matches "$link_dir/git-remote-https" "$TERMUX_GIT_REMOTE_HTTP_BIN" || return 1
@@ -112,7 +131,7 @@ install_git_core_links() {
 	git_core_dir="$HOST_PREFIX_DIR/libexec/git-core"
 	signature="$(git_core_links_signature)"
 	signature_file="$link_dir/.sillydroid-git-core-links.signature"
-	mkdir -p "$link_dir"
+	ensure_dirs "$link_dir"
 
 	# Git helper 链接只和 APK nativeLibraryDir 及 host prefix 有关；
 	# 热启动重复重建上百个链接会明显拖慢小米等设备的服务就绪时间。
@@ -158,8 +177,11 @@ prepare_termux_host_runtime() {
 	assert_file "$TERMUX_CURL_BIN" "缺少 Termux curl 入口：$TERMUX_CURL_BIN"
 	assert_file "$TERMUX_SH_BIN" "缺少 Termux shell 入口：$TERMUX_SH_BIN"
 
-	mkdir -p "$HOST_TMP_DIR"
-	chmod 1777 "$HOST_TMP_DIR"
+	# 目录已存在且带 sticky 位，说明上次已经 chmod 过，不再起 mkdir / chmod 进程。
+	if [ ! -d "$HOST_TMP_DIR" ] || [ ! -k "$HOST_TMP_DIR" ]; then
+		mkdir -p "$HOST_TMP_DIR"
+		chmod 1777 "$HOST_TMP_DIR"
+	fi
 
 	export LD_LIBRARY_PATH="$HOST_NATIVE_LIB_DIR:$HOST_PREFIX_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 	export PREFIX="$HOST_PREFIX_DIR"

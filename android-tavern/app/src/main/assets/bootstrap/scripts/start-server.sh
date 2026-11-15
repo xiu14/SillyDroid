@@ -35,7 +35,7 @@ assert_dir "$HOST_PREFIX_DIR" "缺少 host prefix 目录：$HOST_PREFIX_DIR"
 assert_file "$ANDROID_RESOLV_CONF" "缺少 Android DNS 配置：$ANDROID_RESOLV_CONF"
 assert_file "$BOOTSTRAP_ROOT/scripts/tavern-entrypoint.sh" "缺少 Tavern 服务入口：$BOOTSTRAP_ROOT/scripts/tavern-entrypoint.sh"
 
-mkdir -p "$APP_DATA_ROOT" "$LOGS_DIR" "$HOST_TMP_DIR"
+ensure_dirs "$APP_DATA_ROOT" "$LOGS_DIR" "$HOST_TMP_DIR"
 prepare_termux_host_runtime
 export BOOTSTRAP_ROOT
 export LOGS_DIR
@@ -69,6 +69,6 @@ export HOME="$APP_DATA_ROOT/.termux-home"
 export TERMUX_NODE_BIN
 export TERMUX_GIT_BIN
 export TERMUX_CURL_BIN
-mkdir -p "$HOME" "$TMPDIR"
+ensure_dirs "$HOME" "$TMPDIR"
 cd "$SERVER_DIR"
 exec "$TERMUX_SH_BIN" "$BOOTSTRAP_ROOT/scripts/tavern-entrypoint.sh"
