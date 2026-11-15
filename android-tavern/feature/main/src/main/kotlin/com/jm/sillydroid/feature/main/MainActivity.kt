@@ -118,6 +118,11 @@ class MainActivity : AppCompatActivity() {
             event = "on_create",
             extra = "savedStatePresent=${savedInstanceState != null} savedStateKeys=${savedInstanceState?.keySet()?.sorted()?.joinToString(separator = "|").orEmpty()}"
         )
+        // 尽早开始启动本地服务，不等界面：下面 setContentView 和 composeHosts 里的 createBrowserHost
+        // 要在主线程建界面、初始化 WebView 内核（X8 上合计约 0.3 秒），会话在后台协程里跑，和它们并行。
+        // 启动只依赖 processManager（等同 bootstrapOverlayHost.startBootstrap(false)）；快照是 StateFlow，
+        // 后面挂上的观察者照样拿得到最新状态。
+        processManager.start(false)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         allowMainContentIntoDisplayCutout()
         setContentView(R.layout.activity_main)
@@ -149,10 +154,6 @@ class MainActivity : AppCompatActivity() {
         applyHostSurfaceSystemBars()
 
         composeHosts()
-        // 尽早开始启动本地服务：下面 installBrowserStack 要在主线程初始化 WebView 内核（X8 上约 0.3 秒），
-        // 会话在后台协程里跑，和它并行。启动只依赖 processManager，不依赖浏览器栈；
-        // 快照是 StateFlow，后面挂上的观察者照样拿得到最新状态。
-        bootstrapOverlayHost.startBootstrap(false)
         bootstrapOverlayHost.installAppUpdateCoordinator()
         installSystemUi()
         installBrowserStack()
