@@ -179,6 +179,9 @@ ColorOS 用系统安装器装未认证开发者的 APK 时，每次都要确认�
 - `HealthProbe.awaitReady` 每 1 秒一轮，轮内每 100ms 探测一次，Node 一开始监听就能发现。
 - `AssetExtractor.prepareHostExtensionAssets` 用 `bootstrap/.host-asset-sync-stamp` 记录「APK 安装标识 + 脚本与 host 扩展的文件清单」。都没变就跳过那近千个文件的重写。
 - `RootfsRuntimeProvisioner.ensure` 用 `rootfs/.rootfs-runtime-verified-stamp` 记录上次校验通过时的状态，没变就不再跑 `ensure-rootfs-runtime.sh`。stamp 是 v2 格式：文件身份一节，加上内容 SHA-256 一节。App 升级后安装路径变了、文件身份对不上时，只要内容哈希一致，也会跳过校验。手动重试、崩溃自动重启、启动失败后都会重新完整校验。
+- 启动会话不等前台服务：`MainActivity.onCreate` 一开头就调用 `processManager.start(false)`。`DefaultHostProcessManager` 在前台服务启动请求成功后，直接从 `BootstrapSessionHost`（进程内唯一的 `BootstrapSessionManager`）开始会话；`StartupCoordinatorService` 拿同一个实例，只负责前台通知和保活。以前会话管理器建在服务的 `onCreate` 里，要等 Activity 创建完、第一帧（含 WebView 初始化）画出来才轮到，Node 因此晚了约 0.4 秒。重试仍只走服务。
+- server 覆盖层用 `bootstrap/server/.sillydroid-server-overlay-stamp` 记两边文件的大小和修改时间，两边都没变就不读文件比对。
+- 前端启动时间线：内置扩展 `tavern-native-bridge` 在 `APP_READY` 时往宿主诊断日志写 `event=tavern_startup_timeline`，外加资源明细（格式见它的 README）。X8 热启动实测：点开到能用约 6 秒，其中酒馆前端初始化约 4.4 秒，Node 段约 1.2 秒。所以继续优化 Node（端点懒加载、打包单文件）的收益有限。
 - 启动脚本链（`start-server.sh` → `termux-host-runtime.sh` → `tavern-entrypoint.sh`）每次冷启动都要跑。Android 上 fork/exec 一个小命令约 15～20ms，所以热路径只用 shell 内置命令：用 `test -ef` 检查软链接、用 `read` 读文件、目录已存在就不 `mkdir`、没变化的步骤直接跳过。备份 sidecar 在酒馆 Node 拉起之后才启动。改这几个脚本时别把 `$(readlink)`、`$(cat)` 或无条件的 `rm`/`ln` 加回热路径。
 - 升级后第一次启动以前要 8～9 秒，不是 compile cache 的问题（实测命中）。原因是 APK 升级后 nativeLibraryDir 换了路径，`install_git_core_links` 的签名对不上，要重建 150 多个 git 命令链接。shell 每建一个要起 3 个进程，合计约 6 秒。现在改由 `scripts/sync-git-core-links.cjs` 在一个 Node 进程里批量重建（X8 上约 0.2 秒），失败时退回原来的 shell 循环。剩下的约 3 秒是 Node 从闪存现读新 APK 里的二进制和模块文件。
 
