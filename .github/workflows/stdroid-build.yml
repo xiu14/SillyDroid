@@ -1,6 +1,6 @@
 name: stdroid-build
 
-# 自用 fork 专用：SillyDroid 的构建和发布都在这里跑，不走 rbuild。
+# 自用 fork 专用：STDROID 的构建和发布都在这里跑（本机不编译）。
 # 本机入口：bash scripts/stdroid-gha-build.sh（见 AI_HANDOFF.md「常用构建和验证命令」「发布新版本」）。
 # 脚本把工作区快照成临时 commit 强推到 ci/stdroid 触发本 workflow（push 触发不要求 workflow 在默认分支上），
 # 参数写在 commit message 的 trailer 里：
@@ -116,7 +116,7 @@ jobs:
           printf '发布 %s（versionCode %s，线上 %s）\n' "$tag" "$code" "$current"
 
       # ubuntu-latest 默认 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，单测会大面积失败。
-      # 固定 JDK 17，与 rbuild 构建机一致。
+      # 固定 JDK 17。
       - name: Set up JDK 17
         if: steps.plan.outputs.mode != 'keepalive'
         uses: actions/setup-java@v4

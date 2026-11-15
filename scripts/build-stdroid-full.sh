@@ -3,11 +3,11 @@ set -euo pipefail
 
 # Stdroid Full Build Orchestrator（自用 fork 专用）
 # Responsibilities:
-# - 按 stage 1 → 4 顺序复用上游脚本完成完整构建，可在本机或 rbuild 构建机上执行：
-#     rbuild exec bash scripts/build-stdroid-full.sh --build-type debug
+# - 按 stage 1 → 4 顺序复用上游脚本完成完整构建。由 GitHub Actions（.github/workflows/stdroid-build.yml）调用，
+#   本机入口是 bash scripts/stdroid-gha-build.sh，不要在本机直接跑。
 # - 版本号固定取 android-tavern/gradle.properties 的 stdroidVersionCode / stdroidVersionName。
 #   上游 build-tavern-android-local.sh 会按上游 GitHub release 计算 versionCode（如 1810001069）
-#   并覆盖它，装到手机后会挡住后续 stdroid 版本的覆盖安装，也会让 filesite 更新检查失效。
+#   并覆盖它，装到手机后会挡住后续 stdroid 版本的覆盖安装，App 内更新也会失效。
 # - Tavern tag 默认沿用当前 assets 里的版本，避免无意中升级 SillyTavern；--tavern-tag latest 才取上游最新。
 # - stage 1 / stage 3 产物已存在时默认复用（stage 内部每次都会全量重做），--refresh 强制重建。
 # Must not:

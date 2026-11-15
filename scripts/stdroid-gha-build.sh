@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stdroid GitHub Actions 构建 / 发布入口（自用 fork 专用，SillyDroid 不走 rbuild）
+# Stdroid GitHub Actions 构建 / 发布入口（自用 fork 专用，本机不编译）
 # 用法：
 #   bash scripts/stdroid-gha-build.sh                          # 完整流程 debug APK（stage 1→4）
 #   bash scripts/stdroid-gha-build.sh --tavern-tag latest      # 额外参数原样传给 build-stdroid-full.sh
