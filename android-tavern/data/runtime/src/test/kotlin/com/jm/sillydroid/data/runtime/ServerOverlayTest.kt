@@ -66,6 +66,41 @@ class ServerOverlayTest {
     }
 
     @Test
+    fun `stamp skips reading files when neither side changed since last check`() {
+        val logo = serverFile("public/img/logo.png", byteArrayOf(1, 2, 3))
+        val overlay = overlayFile("public/img/logo.png", byteArrayOf(1, 2, 3))
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).unchanged)
+        assertTrue(File(serverDir, SERVER_OVERLAY_STAMP_FILE_NAME).isFile)
+
+        // 同样大小、同样修改时间但内容不同：stamp 命中就不再读文件，所以仍判为内容相同。
+        // 这正说明第二次启动没有去读这两个文件。
+        val overlayTime = overlay.lastModified()
+        overlay.writeBytes(byteArrayOf(9, 9, 9))
+        assertTrue(overlay.setLastModified(overlayTime))
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).unchanged)
+        assertArrayEquals(byteArrayOf(1, 2, 3), logo.readBytes())
+
+        // 覆盖层文件的修改时间一变就重新比对、重新覆盖。
+        assertTrue(overlay.setLastModified(overlayTime + 5_000))
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).applied)
+        assertArrayEquals(byteArrayOf(9, 9, 9), logo.readBytes())
+    }
+
+    @Test
+    fun `re-extracted server file is overlaid again even though overlay is unchanged`() {
+        val logo = serverFile("public/img/logo.png", byteArrayOf(1, 2, 3))
+        overlayFile("public/img/logo.png", byteArrayOf(7, 7, 7, 7))
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).applied)
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).unchanged)
+
+        // 升级包重新解压 server 源码，把目标换回原版：大小和修改时间都变了，必须重新铺。
+        logo.writeBytes(byteArrayOf(1, 2, 3))
+        assertTrue(logo.setLastModified(System.currentTimeMillis() + 10_000))
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).applied)
+        assertArrayEquals(byteArrayOf(7, 7, 7, 7), logo.readBytes())
+    }
+
+    @Test
     fun `multi chunk files compare every byte including the partial last chunk`() {
         // 比对按 64KB 分块，这里故意用不整除的大小，覆盖中间整块和最后不满的一块。
         val size = 3 * 64 * 1024 + 1234
@@ -215,8 +250,11 @@ class ServerOverlayTest {
 
     private fun overlayFile(relativePath: String, content: ByteArray): File {
         return File(overlayRoot, relativePath).apply {
+            val previousModified = if (isFile) lastModified() else null
             parentFile!!.mkdirs()
             writeBytes(content)
+            // 真实编辑总会更新修改时间；测试里连续两次写入可能落在同一毫秒，手动往后拨，免得被 stamp 当成没变。
+            previousModified?.let { setLastModified(maxOf(lastModified(), it + 1_000)) }
         }
     }
 

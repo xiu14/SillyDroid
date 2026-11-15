@@ -90,6 +90,9 @@ internal fun applyServerOverlay(overlayRoot: File, serverDir: File): ServerOverl
     val applied = mutableListOf<String>()
     val unchanged = mutableListOf<String>()
     val rejected = mutableListOf<ServerOverlaySkip>()
+    val stampFile = File(serverDir, SERVER_OVERLAY_STAMP_FILE_NAME)
+    val previousStamp = readOverlayStamp(stampFile)
+    val nextStamp = mutableMapOf<String, String>()
 
     // walkFileTree 默认不跟随符号链接：指向目录的链接也只会作为一个条目交给 visitFile，不会钻进去。
     Files.walkFileTree(overlayPath, object : SimpleFileVisitor<Path>() {
@@ -101,11 +104,20 @@ internal fun applyServerOverlay(overlayRoot: File, serverDir: File): ServerOverl
                 else -> when (val target = resolveServerOverlayTarget(serverDir, relativePath)) {
                     is ServerOverlayTarget.Rejected -> rejected += ServerOverlaySkip(relativePath, target.reason)
                     is ServerOverlayTarget.Allowed -> try {
-                        if (sameFileContent(file.toFile(), target.target)) {
+                        val identity = overlayFileIdentity(file.toFile(), target.target)
+                        // 两边的大小和修改时间都和上次确认时一样，就不再读文件比对（logo 有 1MB 多，
+                        // 冷启动时和 WebView 初始化抢 CPU，比对一次要上百毫秒）。server 源码重新解压后
+                        // 目标文件的修改时间会变，自然会重新比对。
+                        if (identity != null && previousStamp[relativePath] == identity) {
                             unchanged += relativePath
+                            nextStamp[relativePath] = identity
+                        } else if (sameFileContent(file.toFile(), target.target)) {
+                            unchanged += relativePath
+                            identity?.let { nextStamp[relativePath] = it }
                         } else {
                             copyOverlayFile(file.toFile(), target.target)
                             applied += relativePath
+                            overlayFileIdentity(file.toFile(), target.target)?.let { nextStamp[relativePath] = it }
                         }
                     } catch (error: IOException) {
                         rejected += ServerOverlaySkip(relativePath, "复制失败：${error.message ?: error.javaClass.simpleName}")
@@ -122,6 +134,11 @@ internal fun applyServerOverlay(overlayRoot: File, serverDir: File): ServerOverl
             return FileVisitResult.CONTINUE
         }
     })
+
+    if (nextStamp != previousStamp) {
+        // stamp 只是加速用的缓存，写失败下次就退回逐字节比对，不影响结果。
+        runCatching { writeOverlayStamp(stampFile, nextStamp) }
+    }
 
     return ServerOverlayResult(
         overlayDirectoryPresent = true,
@@ -212,6 +229,41 @@ private fun java.io.InputStream.readNBytesCompat(buffer: ByteArray): Int {
         total += read
     }
     return total
+}
+
+/** 记在 serverDir 根目录，不在 overrides/ 里，所以不会被当成覆盖层文件。 */
+internal const val SERVER_OVERLAY_STAMP_FILE_NAME = ".sillydroid-server-overlay-stamp"
+
+/** 覆盖层文件和目标文件的「大小 + 修改时间」，用来判断上次确认内容相同之后两边有没有被动过。 */
+private fun overlayFileIdentity(source: File, target: File): String? {
+    if (!Files.isRegularFile(target.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+        return null
+    }
+    return "${source.length()}\t${source.lastModified()}\t${target.length()}\t${target.lastModified()}"
+}
+
+/** stamp 每行：相对路径 \t 源大小 \t 源修改时间 \t 目标大小 \t 目标修改时间。读不到或格式不对就当没有。 */
+private fun readOverlayStamp(stampFile: File): Map<String, String> {
+    if (!stampFile.isFile) {
+        return emptyMap()
+    }
+    return runCatching {
+        stampFile.readLines().mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size < 5) return@mapNotNull null
+            val identityParts = parts.takeLast(4)
+            if (identityParts.any { part -> part.toLongOrNull() == null }) return@mapNotNull null
+            parts.dropLast(4).joinToString("\t") to identityParts.joinToString("\t")
+        }.toMap()
+    }.getOrDefault(emptyMap())
+}
+
+private fun writeOverlayStamp(stampFile: File, stamp: Map<String, String>) {
+    val temporary = File(stampFile.parentFile, "${stampFile.name}.tmp")
+    temporary.writeText(stamp.entries.sortedBy { it.key }.joinToString(separator = "") { (path, identity) -> "$path\t$identity\n" })
+    if (!temporary.renameTo(stampFile)) {
+        temporary.delete()
+    }
 }
 
 /** 先写同目录临时文件再改名替换，启动中途被杀也不会留下写了一半的文件。 */
