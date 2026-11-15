@@ -86,8 +86,14 @@ workflow 是 `.github/workflows/stdroid-build.yml`。
 - **签名**用仓库里的 `android-tavern/app/signing/debug.keystore`，不需要配 Secret。release 构建不支持。
 - **JDK 固定 17**：`ubuntu-latest` 默认是 JDK 25，项目的 Mockito / Robolectric（Byte Buddy）只支持到 Java 22，用 25 的话 `:feature:main:testDebugUnitTest` 会有约 30 个测试失败。
 - **耗时**（2026-11 实测，公开仓库的 runner 是 4 核 16G）：触发后几秒内开跑。有缓存时，gradle 模式约 1 分钟，完整构建或发布约 3 分钟；没缓存的完整构建要 11 分钟以上。337MB 的 APK 下载回本机约 2 分钟。
-- **缓存**（`actions/cache`）：full 和 gradle 两种模式分开存。full 存 rootfs、server source、Android 工具链和 Gradle；gradle 只存 Gradle。构建脚本或 gradle 配置一改就会换 key，之后第一次构建慢一些，会自动重建。
-- **缓存保活**：GitHub 会删掉 7 天没用过的缓存。VPS 的 crontab 每天 05:23 跑 `scripts/stdroid-gha-keepalive.sh`，日志在 `artifacts/gha-keepalive.log`。缓存 4 天没用时，它在 `ci/stdroid` 上追加一个 `Stdroid-CI-Mode: keepalive` 空提交，约 1 分钟跑完。`--force` 可以手动触发。它用的是 `ci/stdroid` 当前提交的 tree，所以最后推上去的快照里必须有带 keepalive 模式的 workflow。
+- **缓存**（`actions/cache`）：full 和 gradle 两种模式分开存。full 一份约 1.4GB，存 rootfs、server source、Android 工具链和 Gradle；gradle 一份约 1.1GB，只存 Gradle。构建脚本或 gradle 配置一改就会换 key，之后第一次构建先退回旧缓存，构建完再另存一份。key 里**不要**加 `android-tavern/gradle.properties`：版本号在这个文件里，一加进去，每次发版都会多存两份缓存。
+- **缓存上限**：每个仓库 10GB，公开仓库不收费，但超了也不能多存。超出时 GitHub 会删最久没用的那几份，构建不会坏，但空间会被旧缓存占着。
+- **缓存保活和清理**：GitHub 会删掉 7 天没用过的缓存。VPS 的 crontab 每天 05:23 跑 `scripts/stdroid-gha-keepalive.sh`，日志在 `artifacts/gha-keepalive.log`。它做两件事：
+  - 先清理：full、gradle 两种各留最近用过的一份，其余删掉。有构建在跑时不动。
+  - 再保活：缓存 4 天没用时，在 `ci/stdroid` 上追加一个 `Stdroid-CI-Mode: keepalive` 空提交，约 1 分钟跑完。它用的是 `ci/stdroid` 当前提交的 tree，所以最后推上去的快照里必须有带 keepalive 模式的 workflow。
+
+  `--force` 可以手动触发。
+- **artifact**：APK 和测试报告只保留 3 天。公开仓库的 artifact 存储不收费，不用管。
 - **免费额度**：公开仓库的 Actions 分钟数、Release 存储和下载流量都免费。Release 单个文件要小于 2 GiB。
 - **其他 workflow** 都是上游的：`sillydroid-*.yml` 和 `tavern-server-source-release.yml`。它们只在推 master/main 或手动触发时才跑，留着是为了合并上游时不冲突，别去用。
 
