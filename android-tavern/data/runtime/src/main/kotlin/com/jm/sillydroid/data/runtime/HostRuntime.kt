@@ -259,7 +259,7 @@ fun describeHostRuntimeSelection(context: Context, paths: HostPaths): String {
         append("sdk=${Build.VERSION.SDK_INT} ")
         append("release=${Build.VERSION.RELEASE.orEmpty()} ")
         append("supportedAbis=${Build.SUPPORTED_ABIS?.joinToString(separator = ",").orEmpty()} ")
-        append("selinux=${normalizeSelinuxDiagnosticState(readFirstCommandLine("getenforce"))} ")
+        append("selinux=${readSelinuxDiagnosticState()} ")
         append("nativeLibraryDir=${context.applicationInfo.nativeLibraryDir} ")
         append("selected=${describeRuntimeDirectory(paths.hostLibDir, selectedPath)} ")
         append("packageCandidates=[$packageCandidates]")
@@ -317,30 +317,21 @@ private fun readFileMode(file: File): String {
     }.getOrDefault("")
 }
 
-internal fun normalizeSelinuxDiagnosticState(rawState: String): String {
-    val firstLine = rawState
-        .lineSequence()
-        .map { line -> line.trim() }
-        .firstOrNull { line -> line.isNotBlank() }
-        .orEmpty()
+private val selinuxEnforceFile = File("/sys/fs/selinux/enforce")
 
-    // Some Android sandboxes deny getenforce even though startup can continue normally.
-    return listOf("Enforcing", "Permissive", "Disabled")
-        .firstOrNull { state -> state.equals(firstLine, ignoreCase = true) }
-        ?: "unavailable"
+/** /sys/fs/selinux/enforce 的内容：1 是 Enforcing，0 是 Permissive；读不到或内容不认识都算 unavailable。 */
+internal fun selinuxStateFromEnforceFile(rawValue: String?): String {
+    return when (rawValue?.trim()) {
+        "1" -> "Enforcing"
+        "0" -> "Permissive"
+        else -> "unavailable"
+    }
 }
 
-private fun readFirstCommandLine(command: String): String {
-    return runCatching {
-        ProcessBuilder("/system/bin/sh", "-c", command)
-            .redirectErrorStream(true)
-            .start()
-            .let { process ->
-                val output = process.inputStream.bufferedReader().use { reader -> reader.readText().trim() }
-                process.waitFor(1, TimeUnit.SECONDS)
-                output.lineSequence().firstOrNull().orEmpty()
-            }
-    }.getOrDefault("")
+// getenforce 读的也是这个文件。以前每次启动都用 ProcessBuilder 跑 sh -c getenforce，
+// 要从 App 进程 fork 再 exec 两次，冷启动时白花几十到上百毫秒；很多 ROM（包括 ColorOS）还不让 App 读，结果本来就是 unavailable。
+private fun readSelinuxDiagnosticState(): String {
+    return selinuxStateFromEnforceFile(runCatching { selinuxEnforceFile.readText() }.getOrNull())
 }
 
 fun resolveHostLogsDir(context: Context): File {

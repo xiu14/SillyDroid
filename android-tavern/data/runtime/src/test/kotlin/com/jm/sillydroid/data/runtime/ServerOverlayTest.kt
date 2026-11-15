@@ -66,6 +66,28 @@ class ServerOverlayTest {
     }
 
     @Test
+    fun `multi chunk files compare every byte including the partial last chunk`() {
+        // 比对按 64KB 分块，这里故意用不整除的大小，覆盖中间整块和最后不满的一块。
+        val size = 3 * 64 * 1024 + 1234
+        val content = ByteArray(size) { index -> (index * 31 + 7).toByte() }
+        val logo = serverFile("public/img/logo.png", content)
+        overlayFile("public/img/logo.png", content.copyOf())
+
+        assertEquals(listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).unchanged)
+
+        for (changedIndex in listOf(size - 1, 64 * 1024 + 5)) {
+            val changed = content.copyOf().also { bytes -> bytes[changedIndex] = (bytes[changedIndex] + 1).toByte() }
+            overlayFile("public/img/logo.png", changed)
+            assertEquals("第 $changedIndex 字节不同必须覆盖", listOf("public/img/logo.png"), applyServerOverlay(overlayRoot, serverDir).applied)
+            assertArrayEquals(changed, logo.readBytes())
+            // 恢复成和 server 端一致，再测下一个位置。
+            overlayFile("public/img/logo.png", content.copyOf())
+            applyServerOverlay(overlayRoot, serverDir)
+            assertArrayEquals(content, logo.readBytes())
+        }
+    }
+
+    @Test
     fun `escaping paths are rejected`() {
         listOf(
             "../outside.txt",

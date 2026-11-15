@@ -6,20 +6,19 @@ import org.junit.Test
 class HostRuntimeDiagnosticTest {
 
     @Test
-    fun `selinux diagnostic keeps valid enforcing state`() {
-        assertEquals("Enforcing", normalizeSelinuxDiagnosticState("Enforcing\n"))
+    fun `selinux diagnostic maps enforce file values`() {
+        assertEquals("Enforcing", selinuxStateFromEnforceFile("1\n"))
+        assertEquals("Permissive", selinuxStateFromEnforceFile("0"))
     }
 
     @Test
-    fun `selinux diagnostic hides sandbox permission errors`() {
-        assertEquals(
-            "unavailable",
-            normalizeSelinuxDiagnosticState("getenforce: Couldn't get enforcing status: Permission denied")
-        )
+    fun `selinux diagnostic hides unreadable enforce file`() {
+        assertEquals("unavailable", selinuxStateFromEnforceFile(null))
     }
 
     @Test
-    fun `selinux diagnostic hides blank output`() {
-        assertEquals("unavailable", normalizeSelinuxDiagnosticState(""))
+    fun `selinux diagnostic hides blank or unexpected content`() {
+        assertEquals("unavailable", selinuxStateFromEnforceFile(""))
+        assertEquals("unavailable", selinuxStateFromEnforceFile("Permission denied"))
     }
 }

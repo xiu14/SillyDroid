@@ -192,9 +192,13 @@ private fun sameFileContent(source: File, target: File): Boolean {
                 val targetRead = targetStream.readNBytesCompat(targetBuffer)
                 if (read != targetRead) return false
                 if (read <= 0) return true
-                for (index in 0 until read) {
-                    if (sourceBuffer[index] != targetBuffer[index]) return false
+                // 不在 Kotlin 里逐字节循环：debug 包的 App 代码基本是解释执行，比 1MB 多的 logo 要一百多毫秒。
+                // Arrays.equals 在系统预编译的核心库里。最后一块不满时把两边剩余部分清零，再整块比较。
+                if (read < sourceBuffer.size) {
+                    sourceBuffer.fill(0, read)
+                    targetBuffer.fill(0, read)
                 }
+                if (!sourceBuffer.contentEquals(targetBuffer)) return false
             }
         }
     }
