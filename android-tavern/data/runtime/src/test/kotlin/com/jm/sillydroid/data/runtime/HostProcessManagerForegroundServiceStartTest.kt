@@ -47,6 +47,55 @@ class HostProcessManagerForegroundServiceStartTest {
     }
 
     @Test
+    fun `normal start begins the session early without waiting for the service`() {
+        val calls = mutableListOf<String>()
+        val processManager = DefaultHostProcessManager(
+            context = TestContext(),
+            dispatchers = TestDispatchers,
+            serviceStarter = StartupCoordinatorServiceStarter { _, retry -> calls += "service(retry=$retry)" },
+            earlySessionStarter = EarlyBootstrapSessionStarter { calls += "early" }
+        )
+
+        processManager.start(retry = false)
+
+        // 必须先成功发出前台服务启动请求，再提前开始会话。
+        assertEquals(listOf("service(retry=false)", "early"), calls)
+    }
+
+    @Test
+    fun `retry is left to the service so it does not run twice`() {
+        val calls = mutableListOf<String>()
+        val processManager = DefaultHostProcessManager(
+            context = TestContext(),
+            dispatchers = TestDispatchers,
+            serviceStarter = StartupCoordinatorServiceStarter { _, retry -> calls += "service(retry=$retry)" },
+            earlySessionStarter = EarlyBootstrapSessionStarter { calls += "early" }
+        )
+
+        processManager.start(retry = true)
+
+        assertEquals(listOf("service(retry=true)"), calls)
+    }
+
+    @Test
+    fun `rejected foreground service start does not begin the session early`() {
+        var earlyCalls = 0
+        val processManager = DefaultHostProcessManager(
+            context = TestContext(),
+            dispatchers = TestDispatchers,
+            serviceStarter = StartupCoordinatorServiceStarter { _, _ ->
+                throw IllegalStateException("startForegroundService() not allowed due to mAllowStartForeground false")
+            },
+            earlySessionStarter = EarlyBootstrapSessionStarter { earlyCalls += 1 }
+        )
+
+        processManager.start(retry = false)
+
+        assertEquals(0, earlyCalls)
+        assertEquals(BootstrapLifecycle.FAILED_ERROR, processManager.currentSnapshot().lifecycle)
+    }
+
+    @Test
     fun `unexpected service start errors are still rethrown`() {
         val processManager = DefaultHostProcessManager(
             context = TestContext(),

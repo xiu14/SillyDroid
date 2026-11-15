@@ -149,6 +149,10 @@ class MainActivity : AppCompatActivity() {
         applyHostSurfaceSystemBars()
 
         composeHosts()
+        // 尽早开始启动本地服务：下面 installBrowserStack 要在主线程初始化 WebView 内核（X8 上约 0.3 秒），
+        // 会话在后台协程里跑，和它并行。启动只依赖 processManager，不依赖浏览器栈；
+        // 快照是 StateFlow，后面挂上的观察者照样拿得到最新状态。
+        bootstrapOverlayHost.startBootstrap(false)
         bootstrapOverlayHost.installAppUpdateCoordinator()
         installSystemUi()
         installBrowserStack()
@@ -156,7 +160,6 @@ class MainActivity : AppCompatActivity() {
         if (shouldUseWebViewSurface()) {
             inspectWebViewRuntimeBeforeBootstrap()
         }
-        bootstrapOverlayHost.startBootstrap(false)
         if (!maybePromptCrashLogUploadConsent()) {
             maybeShowWebViewRendererCrashBrowserEngineHint()
         }

@@ -30,7 +30,8 @@ interface HostProcessManager : BootstrapController {
 class DefaultHostProcessManager(
     context: Context,
     private val dispatchers: DispatcherProvider,
-    private val serviceStarter: StartupCoordinatorServiceStarter = AndroidStartupCoordinatorServiceStarter
+    private val serviceStarter: StartupCoordinatorServiceStarter = AndroidStartupCoordinatorServiceStarter,
+    private val earlySessionStarter: EarlyBootstrapSessionStarter = AndroidEarlyBootstrapSessionStarter
 ) : HostProcessManager {
     private val appContext = context.applicationContext
 
@@ -60,6 +61,13 @@ class DefaultHostProcessManager(
                 throw error
             }
             recordForegroundServiceStartRejected(error)
+            return
+        }
+        // 前台服务的 onStartCommand 要等主线程做完 Activity 创建和第一帧才执行（约 0.4 秒），
+        // 普通启动不等它，直接开始会话；服务起来后再调 start(false) 时会话已在进行，直接返回。
+        // 重试（forceRestart）仍只交给服务，避免同一次重试被执行两遍。
+        if (!retry) {
+            earlySessionStarter.startEarly(appContext)
         }
     }
 

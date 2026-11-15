@@ -52,37 +52,28 @@ class StartupCoordinatorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // 9.B: 在每次服务实例创建（含进程重启）时复位内存快照，
-        // 防止上次进程残留的 BootstrapSessionRuntimeStore.snapshot 被新会话误用。
-        BootstrapSessionRuntimeStore.reset()
         val graph = (applicationContext as SillyDroidAppGraphProvider).sillyDroidAppGraph
         hostNotificationService = graph.hostNotificationService
         hostNotificationService.ensureChannels()
+        // 会话管理器由 BootstrapSessionHost 持有：MainActivity 启动时可能已经提前开始了会话（见 BootstrapSessionHost），
+        // 这里拿到的是同一个实例；没有就新建，新建时复位内存快照（9.B：防止上一个服务实例的残留快照被新会话误用）。
+        sessionManager = BootstrapSessionHost.obtain(applicationContext)
         // startForegroundService 到 Service.onStartCommand 之间存在系统超时窗口；
-        // 先用当前启动快照进入 foreground，再做日志与会话管理器初始化，避免重启/设置返回时被系统判定未及时前台化。
+        // 先用当前启动快照进入 foreground，避免重启/设置返回时被系统判定未及时前台化。
         runCatching {
             hostNotificationService.postForeground(this, buildForegroundNotificationSpec(BootstrapSessionRuntimeStore.snapshot.value))
         }.onFailure { error ->
             Log.w(LOG_TAG, "Initial foreground notification post failed.", error)
         }
-        graph.runtimeLogManager.initializeForAppStart()
-        sessionManager = BootstrapSessionManager(
-            context = applicationContext,
-            scope = serviceScope,
-            runtimeLogs = graph.runtimeLogManager,
-            appForegroundState = graph.appForegroundState,
-            hostPreferences = graph.hostConfigStore,
-            settingsConfig = graph.tavernConfigRepository(),
-            onSnapshotChanged = { snapshot ->
-                // 前台通知的进度更新在边缘时序下也可能触发前台启动限制异常；
-                // 已运行会话的通知刷新失败不致命，这里只记录并跳过本次更新。
-                runCatching {
-                    hostNotificationService.postForeground(this@StartupCoordinatorService, buildForegroundNotificationSpec(snapshot))
-                }.onFailure { error ->
-                    Log.w(LOG_TAG, "Foreground notification update failed.", error)
-                }
+        BootstrapSessionHost.setSnapshotListener { snapshot ->
+            // 前台通知的进度更新在边缘时序下也可能触发前台启动限制异常；
+            // 已运行会话的通知刷新失败不致命，这里只记录并跳过本次更新。
+            runCatching {
+                hostNotificationService.postForeground(this@StartupCoordinatorService, buildForegroundNotificationSpec(snapshot))
+            }.onFailure { error ->
+                Log.w(LOG_TAG, "Foreground notification update failed.", error)
             }
-        )
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -124,7 +115,7 @@ class StartupCoordinatorService : Service() {
     }
 
     override fun onDestroy() {
-        sessionManager.close()
+        BootstrapSessionHost.release()
         serviceScope.cancel()
         hostNotificationService.remove(foregroundNotificationKey)
         super.onDestroy()
