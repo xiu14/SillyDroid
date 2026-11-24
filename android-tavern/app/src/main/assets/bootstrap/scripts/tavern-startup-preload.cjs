@@ -156,6 +156,120 @@ function patchWebpackServeSource(source) {
     return `import sillydroidFs from 'node:fs';\n${patched}`;
 }
 
+// 首页先按当前用户的主题颜色上色：ST 默认的 --SmartThemeBlurTintColor 近乎黑色，加载画面和 body 都用它，
+// 要等前端 JS 读完设置才换成用户主题，浅色主题启动时会先黑一下。这里在返回 index.html 时，
+// 把 power_user 里的主题颜色写成 :root 变量插在 style.css 之后、user.css 之前：
+// 盖住默认深色，但不压过 user.css 和主题自带的自定义 CSS；前端 JS 之后设的内联变量照常优先。
+const SERVER_MAIN_SUFFIX = '/src/server-main.js';
+const INDEX_SEND_ANCHOR = `    return response.sendFile('index.html', { root: path.join(serverDirectory, 'public') });
+`;
+const INDEX_STYLE_ANCHOR = '<link rel="stylesheet" type="text/css" href="style.css">';
+const BOOT_THEME_VARIABLES = [
+    ['blur_tint_color', '--SmartThemeBlurTintColor'],
+    ['main_text_color', '--SmartThemeBodyColor'],
+    ['chat_tint_color', '--SmartThemeChatTintColor'],
+    ['user_mes_blur_tint_color', '--SmartThemeUserMesBlurTintColor'],
+    ['bot_mes_blur_tint_color', '--SmartThemeBotMesBlurTintColor'],
+    ['italics_text_color', '--SmartThemeEmColor'],
+    ['underline_text_color', '--SmartThemeUnderlineColor'],
+    ['quote_text_color', '--SmartThemeQuoteColor'],
+    ['shadow_color', '--SmartThemeShadowColor'],
+    ['border_color', '--SmartThemeBorderColor'],
+];
+// 只接受颜色写法，免得设置里的怪值把 <style> 截断。
+const CSS_COLOR_PATTERN = /^(#[0-9a-f]{3,8}|(rgba?|hsla?)\([0-9\s.,%a-z/+-]*\)|[a-z]+)$/i;
+
+function patchServerMainSource(source) {
+    if (!source.includes(INDEX_SEND_ANCHOR)) {
+        return null;
+    }
+    return source.replace(INDEX_SEND_ANCHOR, `    if (globalThis.__sillydroidSendIndexPage?.(request, response, path.join(serverDirectory, 'public'))) {
+        return;
+    }
+${INDEX_SEND_ANCHOR}`);
+}
+
+function buildBootThemeStyle(settings) {
+    const powerUser = settings?.power_user;
+    if (!powerUser || typeof powerUser !== 'object') {
+        return '';
+    }
+    const declarations = [];
+    for (const [key, variable] of BOOT_THEME_VARIABLES) {
+        const value = typeof powerUser[key] === 'string' ? powerUser[key].trim() : '';
+        if (value && CSS_COLOR_PATTERN.test(value)) {
+            declarations.push(`${variable}:${value}`);
+        }
+    }
+    if (!declarations.some((declaration) => declaration.startsWith('--SmartThemeBlurTintColor:'))) {
+        return '';
+    }
+    return `<style id="sillydroid-boot-theme">:root{${declarations.join(';')}}</style>`;
+}
+
+function injectBootTheme(html, style) {
+    if (!style || !html.includes(INDEX_STYLE_ANCHOR)) {
+        return null;
+    }
+    return html.replace(INDEX_STYLE_ANCHOR, `${INDEX_STYLE_ANCHOR}\n    ${style}`);
+}
+
+/** 按路径缓存文件派生的结果，文件的大小或修改时间变了才重新读。 */
+function createFileCache(derive) {
+    const entries = new Map();
+    return (filePath) => {
+        const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+        if (!stat?.isFile()) {
+            entries.delete(filePath);
+            return null;
+        }
+        const stamp = `${stat.size}:${stat.mtimeMs}`;
+        const cached = entries.get(filePath);
+        if (cached?.stamp === stamp) {
+            return cached.value;
+        }
+        const value = derive(fs.readFileSync(filePath, 'utf8'));
+        entries.set(filePath, { stamp, value });
+        return value;
+    };
+}
+
+function installIndexPageThemer() {
+    const readIndexHtml = createFileCache((text) => text);
+    const readBootThemeStyle = createFileCache((text) => buildBootThemeStyle(JSON.parse(text)));
+    let loggedFailure = false;
+    let loggedInjection = false;
+
+    // 返回 true 表示已经响应；任何问题都返回 false，由上游原样 sendFile。
+    globalThis.__sillydroidSendIndexPage = (request, response, publicDirectory) => {
+        try {
+            const userRoot = request.user?.directories?.root;
+            if (typeof userRoot !== 'string' || !userRoot) {
+                return false;
+            }
+            const style = readBootThemeStyle(path.join(userRoot, 'settings.json'));
+            const html = style ? readIndexHtml(path.join(publicDirectory, 'index.html')) : null;
+            const themed = html ? injectBootTheme(html, style) : null;
+            if (!themed) {
+                return false;
+            }
+            response.set('Cache-Control', 'no-cache');
+            response.type('html').send(themed);
+            if (!loggedInjection) {
+                loggedInjection = true;
+                log('event=boot_theme_injected');
+            }
+            return true;
+        } catch (error) {
+            if (!loggedFailure) {
+                loggedFailure = true;
+                log(`event=boot_theme_failed error=${describeError(error)}`);
+            }
+            return false;
+        }
+    };
+}
+
 function isUpstreamSourceUrl(url, suffix) {
     return typeof url === 'string' && url.startsWith('file:') && url.endsWith(suffix) && !url.includes('/node_modules/');
 }
@@ -200,14 +314,23 @@ function registerHooks(serverDirectory, lazyEnabled) {
                 }
                 log('event=webpack_skip_anchor_missing');
             }
+            if (isUpstreamSourceUrl(url, SERVER_MAIN_SUFFIX) && result.source != null) {
+                const patched = patchServerMainSource(String(result.source));
+                if (patched !== null) {
+                    return { ...result, source: patched };
+                }
+                log('event=boot_theme_anchor_missing');
+            }
 
             return result;
         },
     });
+    installIndexPageThemer();
 
     return {
         lazy: lazyStubs.length > 0 ? lazyStubs.map((stub) => stub.specifier).join(',') : 'off',
         webpackSkip: 'on',
+        bootTheme: 'on',
     };
 }
 
@@ -227,15 +350,18 @@ function main() {
 
     const tavernVersion = readTavernVersion(serverDirectory);
     const lazyEnabled = LAZY_SUPPORTED_TAVERN_VERSIONS.includes(tavernVersion);
-    let hooks = { lazy: 'failed', webpackSkip: 'failed' };
+    let hooks = { lazy: 'failed', webpackSkip: 'failed', bootTheme: 'failed' };
     try {
         hooks = registerHooks(serverDirectory, lazyEnabled);
     } catch (error) {
         log(`event=register_hooks_failed error=${describeError(error)}`);
     }
 
-    log(`event=ready tavern_version=${tavernVersion || 'unknown'} compile_cache=${compileCache} lazy=${hooks.lazy} webpack_skip=${hooks.webpackSkip}`);
+    log(`event=ready tavern_version=${tavernVersion || 'unknown'} compile_cache=${compileCache} lazy=${hooks.lazy} webpack_skip=${hooks.webpackSkip} boot_theme=${hooks.bootTheme ?? 'unsupported'}`);
 }
+
+// 单测入口：node 直接 require 时设 SILLYDROID_STARTUP_PRELOAD=off，只拿纯函数，不注册钩子。
+module.exports = { patchServerMainSource, buildBootThemeStyle, injectBootTheme, installIndexPageThemer };
 
 try {
     main();
