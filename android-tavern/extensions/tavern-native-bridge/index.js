@@ -34,6 +34,7 @@
         startedEmitted: false,
     };
     runtime.silentHelperRequests ??= [];
+    runtime.lastThemeBackground ??= '';
 
     if (runtime.initialized) {
         window.__tavernNativeBridgeExtensionReady = true;
@@ -474,11 +475,50 @@
         return true;
     }
 
+    /** 把 #rgb / #rrggbb / #rrggbbaa / rgb() / rgba() 换成不透明的 #RRGGBB；认不出返回空串。 */
+    function toOpaqueHexColor(value) {
+        const text = String(value || '').trim().toLowerCase();
+        let channels = null;
+        const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/);
+        if (hex) {
+            const digits = hex[1].length === 3 ? hex[1].split('').map((digit) => digit + digit).join('') : hex[1].slice(0, 6);
+            channels = [0, 2, 4].map((index) => parseInt(digits.slice(index, index + 2), 16));
+        } else {
+            const rgb = text.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/);
+            if (rgb) channels = rgb.slice(1, 4).map((channel) => Math.round(Number(channel)));
+        }
+        if (!channels || channels.some((channel) => !Number.isFinite(channel) || channel < 0 || channel > 255)) return '';
+        return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+    }
+
+    // 酒馆主题套上后，把加载画面和 body 用的底色报给 App，下次启动时启动画面和占位底色就用它。
+    function reportThemeBackground() {
+        try {
+            const raw = getComputedStyle(document.documentElement).getPropertyValue('--SmartThemeBlurTintColor');
+            const background = toOpaqueHexColor(raw);
+            if (!background || background === runtime.lastThemeBackground) return;
+            runtime.lastThemeBackground = background;
+            emit('page_theme_background', { background });
+        } catch (error) {
+            console.warn(`[${MODULE_NAME}] report theme background failed`, error);
+        }
+    }
+
+    function scheduleThemeBackgroundReport() {
+        clearTimeout(runtime.themeBackgroundTimer);
+        runtime.themeBackgroundTimer = setTimeout(reportThemeBackground, 300);
+    }
+
     function attachListeners(context, eventTypes) {
         if (runtime.listenersAttached) return true;
         if (!context?.eventSource || !eventTypes.GENERATION_STARTED) return false;
 
         runtime.listenersAttached = true;
+
+        // APP_READY 是自动补发事件，晚挂上的监听也会收到；换主题会触发 SETTINGS_UPDATED。
+        for (const eventType of [eventTypes.APP_READY, eventTypes.SETTINGS_LOADED_AFTER, eventTypes.SETTINGS_UPDATED]) {
+            if (eventType) context.eventSource.on(eventType, scheduleThemeBackgroundReport);
+        }
 
         context.eventSource.on(eventTypes.GENERATION_STARTED, (type, params, dryRun) => {
             if (dryRun) return;

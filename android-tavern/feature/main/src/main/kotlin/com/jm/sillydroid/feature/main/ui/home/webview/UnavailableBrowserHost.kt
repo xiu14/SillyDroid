@@ -1,5 +1,6 @@
 package com.jm.sillydroid.feature.main.ui.home.webview
 
+import com.jm.sillydroid.feature.main.ui.home.startup.StartupSurfaceColors
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -66,7 +67,7 @@ class UnavailableBrowserHost(
         if (unavailableView.parent == null) {
             browserFrame.addView(unavailableView)
         }
-        browserFrame.setBackgroundColor(ContextCompat.getColor(activity, R.color.tavern_webview_background))
+        browserFrame.setBackgroundColor(StartupSurfaceColors.placeholderBackground(activity))
         recordUnavailableDiagnostic(event = "configured")
     }
 
@@ -149,7 +150,7 @@ class UnavailableBrowserHost(
                 activity.resources.getDimensionPixelSize(R.dimen.sillydroid_space_3xl),
                 activity.resources.getDimensionPixelSize(R.dimen.sillydroid_space_3xl)
             )
-            setBackgroundColor(ContextCompat.getColor(activity, R.color.tavern_webview_background))
+            setBackgroundColor(StartupSurfaceColors.placeholderBackground(activity))
 
             addView(TextView(activity).apply {
                 text = activity.getString(R.string.browser_unavailable_title)

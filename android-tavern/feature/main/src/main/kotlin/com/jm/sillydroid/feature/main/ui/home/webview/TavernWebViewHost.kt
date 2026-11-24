@@ -1,5 +1,6 @@
 package com.jm.sillydroid.feature.main.ui.home.webview
 
+import com.jm.sillydroid.feature.main.ui.home.startup.StartupSurfaceColors
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
@@ -249,7 +250,7 @@ class TavernWebViewHost(
     }
 
     override fun configure() {
-        val webViewBackgroundColor = ContextCompat.getColor(activity, R.color.tavern_webview_background)
+        val webViewBackgroundColor = StartupSurfaceColors.placeholderBackground(activity)
         homeWebViewRefreshController.configure(webViewBackgroundColor)
         homeWebViewController.configure()
         setBrowserZoomPercent(hostConfigStore.browserZoomPercent)

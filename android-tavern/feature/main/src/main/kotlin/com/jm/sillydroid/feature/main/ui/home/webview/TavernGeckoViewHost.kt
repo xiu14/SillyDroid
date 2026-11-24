@@ -1,5 +1,6 @@
 package com.jm.sillydroid.feature.main.ui.home.webview
 
+import com.jm.sillydroid.feature.main.ui.home.startup.StartupSurfaceColors
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -16,7 +17,6 @@ import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.jm.sillydroid.core.model.bootstrap.BootstrapSessionSnapshot
@@ -117,7 +117,7 @@ class TavernGeckoViewHost(
     private val geckoView: GeckoView = retainedGeckoSurface.geckoView.also { retainedView ->
         // GeckoView 作为替代内核的关键目标是减少系统 WebView renderer gone，同时保持 GPU 合成路径常驻。
         retainedView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        retainedView.setBackgroundColor(ContextCompat.getColor(activity, R.color.tavern_webview_background))
+        retainedView.setBackgroundColor(StartupSurfaceColors.placeholderBackground(activity))
     }
     private val bootstrapOverlay: View = activity.findViewById(R.id.bootstrapOverlay)
     private val activityManager by lazy {
@@ -178,7 +178,7 @@ class TavernGeckoViewHost(
             return
         }
         configured = true
-        browserFrame.setBackgroundColor(ContextCompat.getColor(activity, R.color.tavern_webview_background))
+        browserFrame.setBackgroundColor(StartupSurfaceColors.placeholderBackground(activity))
         installDelegates()
         if (!session.isOpen) {
             session.open(runtime(activity))

@@ -43,6 +43,9 @@ import com.jm.sillydroid.feature.main.status.GenerationStatusEvent
 import com.jm.sillydroid.feature.main.status.NotificationStatusPresenter
 import com.jm.sillydroid.feature.main.ui.extensions.DefaultExtensionsInstallerLauncher
 import com.jm.sillydroid.feature.main.ui.home.speech.SelectionSpeechController
+import com.jm.sillydroid.feature.main.ui.home.startup.StartupSurfaceColors
+import com.jm.sillydroid.feature.main.ui.home.startup.StartupThemeColorStore
+import com.jm.sillydroid.feature.main.ui.home.startup.parseOpaqueHexColor
 import com.jm.sillydroid.feature.main.ui.home.HomeViewModel
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeActions
 import com.jm.sillydroid.feature.main.ui.home.bridge.BrowserHostBridgeInstaller
@@ -149,6 +152,10 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         )
+        // 启动遮罩先用上次记下的酒馆主题底色（见 StartupSurfaceColors），免得浅色主题启动时先黑一下。
+        StartupSurfaceColors.overlayPalette(this)?.let { palette ->
+            StartupSurfaceColors.applyToOverlay(findViewById(R.id.hostSurfaceRoot), palette)
+        }
         // 主界面刚启动时先显示 bootstrap overlay；系统栏先跟宿主遮罩底色走，
         // 等 WebView 页面拿到真实背景色后再由页面桥持续同步过去。
         applyHostSurfaceSystemBars()
@@ -758,6 +765,10 @@ class MainActivity : AppCompatActivity() {
         if (name != "js_error") {
             recordBridgeStatus(name, payloadJson)
         }
+        if (name == PAGE_THEME_BACKGROUND_EVENT) {
+            recordPageThemeBackground(payloadJson)
+            return
+        }
         val event = runCatching {
             GenerationStatusEvent.from(name, payloadJson)
         }.onFailure { error ->
@@ -768,6 +779,19 @@ class MainActivity : AppCompatActivity() {
         }.getOrNull() ?: return
 
         generationStatusController.handle(event)
+    }
+
+    /** tavern-native-bridge 上报的酒馆主题底色，存下来给下次启动的遮罩和占位底色用。 */
+    private fun recordPageThemeBackground(payloadJson: String?) {
+        val color = runCatching {
+            payloadJson?.takeIf { it.isNotBlank() }?.let(::JSONObject)?.optString("background")
+        }.getOrNull().let(::parseOpaqueHexColor) ?: return
+        if (StartupThemeColorStore.write(applicationContext, color)) {
+            recordDefaultHostDiagnostic(
+                category = "startup_surface",
+                body = "event=theme_background_saved color=${String.format("#%06X", color and 0xFFFFFF)}"
+            )
+        }
     }
 
     private fun recordBridgeStatus(name: String, payloadJson: String?) {
@@ -802,7 +826,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyHostSurfaceSystemBars() {
         applyMainSurfaceSystemBars(
-            backgroundColor = ContextCompat.getColor(this, R.color.bootstrap_overlay_background)
+            backgroundColor = StartupThemeColorStore.read(this)
+                ?: ContextCompat.getColor(this, R.color.bootstrap_overlay_background)
         )
     }
 
@@ -811,7 +836,7 @@ class MainActivity : AppCompatActivity() {
         lastWebViewStatusBarColorHex = null
         lastWebViewNavigationBarColorHex = null
         val parsedColor = runCatching { Color.parseColor(hexColor.trim()) }
-            .getOrDefault(ContextCompat.getColor(this, R.color.tavern_webview_background))
+            .getOrDefault(StartupSurfaceColors.placeholderBackground(this))
         applyMainSurfaceSystemBars(parsedColor)
     }
 
@@ -820,7 +845,7 @@ class MainActivity : AppCompatActivity() {
         lastWebViewStatusBarColorHex = statusBarHexColor
         lastWebViewNavigationBarColorHex = navigationBarHexColor
         val statusBarColor = runCatching { Color.parseColor(statusBarHexColor.trim()) }
-            .getOrDefault(ContextCompat.getColor(this, R.color.tavern_webview_background))
+            .getOrDefault(StartupSurfaceColors.placeholderBackground(this))
         val navigationBarColor = runCatching { Color.parseColor(navigationBarHexColor.trim()) }
             .getOrDefault(statusBarColor)
         applyMainSurfaceSystemBars(
@@ -873,7 +898,7 @@ class MainActivity : AppCompatActivity() {
         val webViewColor = lastWebViewSystemBarsColorHex
         if (webViewColor.isNullOrBlank()) {
             applyMainSurfaceSystemBars(
-                backgroundColor = ContextCompat.getColor(this, R.color.tavern_webview_background)
+                backgroundColor = StartupSurfaceColors.placeholderBackground(this)
             )
             return
         }
@@ -1258,6 +1283,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         private const val TAVERN_NATIVE_BRIDGE_ID = "third-party/tavern-native-bridge"
+        private const val PAGE_THEME_BACKGROUND_EVENT = "page_theme_background"
         private const val remoteBackupAutoRetryThrottleMs = 5L * 60L * 1000L
         private const val remoteEditReloadRetryMs = 10_000L
         private const val remoteEditIdlePollMs = 30_000L
