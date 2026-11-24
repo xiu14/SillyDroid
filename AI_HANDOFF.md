@@ -191,7 +191,20 @@ Node 侧（`app/src/main/assets/bootstrap/scripts/tavern-startup-preload.cjs`，
 - 把 `vectra`、`sillytavern-transformers`、`archiver` 换成惰性桩，第一次用到时才加载。升级内置 Tavern 后惰性桩默认不生效：`LAZY_SUPPORTED_TAVERN_VERSIONS` 里只列了验证过的版本。要先核对上游 `src/endpoints/vectors.js`、`src/users.js`、`src/transformers.js` 对这三个包的用法没变，再把新版本号加进去。
 - 前端库产物已存在时跳过 webpack 编译。
 
+- 首页先按用户主题上色：ST 默认的 `--SmartThemeBlurTintColor` 近乎黑色，加载画面和 `body` 都用它，要等前端 JS 读完设置才换成用户主题，浅色主题会先黑一下。所以给 `src/server-main.js` 返回 `index.html` 的那行加了钩子：按当前用户 `settings.json` 的 `power_user` 颜色生成 `:root` 变量，插在 `style.css` 之后、`user.css` 之前，不压过 `user.css` 和主题自定义 CSS。锚点对不上、读不到设置或出错时，交还上游原样返回。启动日志的 `event=ready` 一行里有 `boot_theme=on`，第一次注入成功时还会打一行 `event=boot_theme_injected`。
+
 `server-source.zip` 仍是原样的上游源码，这些都是进程内处理。排查问题时，设置环境变量 `SILLYDROID_STARTUP_PRELOAD=off` 可以整体关闭预加载。
+
+### 启动画面配色跟随酒馆主题
+
+App 主题继承 `DayNight`，跟随系统深浅色；没有写死深色模式。系统开深色时，启动遮罩和浏览器占位底色是 `#111827`，用户用浅色主题时，启动会先暗一下。所以：
+
+- `tavern-native-bridge` 在 `APP_READY`、`SETTINGS_LOADED_AFTER`、`SETTINGS_UPDATED` 之后读出 `--SmartThemeBlurTintColor`，换算成不透明的 `#RRGGBB`，颜色变了才上报 `page_theme_background`。
+- `MainActivity` 收到后存进 SharedPreferences `sillydroid_startup_surface`，代码在 `feature/main/.../ui/home/startup/StartupSurfacePalette.kt`。
+- 下次启动时，启动遮罩、浏览器占位底色和系统栏都用这个颜色。文字按底色亮度取日间或夜间那套 `bootstrap_overlay_*` 颜色；图标按钮的底色和描边从底色混出来。
+- 还没上报过时，保持按系统深浅色的默认配色。
+- 系统启动窗口（`windowBackground`）是主题里静态定义的，没法跟着变，不过只闪一瞬间。
+- 配合上文冷启动加速里的「首页先按用户主题上色」，整个启动过程是同一个底色。
 
 ### server 覆盖层（升级后保留对内置酒馆程序文件的改动）
 
